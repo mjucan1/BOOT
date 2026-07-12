@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import (Column, Float, Integer, MetaData, Table, Text,
-                        create_engine, insert)
+                        create_engine, delete, func, insert, select)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: E402
@@ -120,6 +120,24 @@ def insert_stores(rows: list[dict]) -> None:
 
 def insert_foot_traffic(rows: list[dict]) -> None:
     _insert(foot_traffic, rows)
+
+
+def max_foot_traffic_date() -> str | None:
+    """Latest date_range_start already loaded (so sync only pulls newer data)."""
+    with get_engine().connect() as conn:
+        return conn.execute(
+            select(func.max(foot_traffic.c.date_range_start))).scalar()
+
+
+def delete_foot_traffic_dates(source: str, dates) -> None:
+    """Remove existing rows for these weeks so a re-load replaces (no dupes)."""
+    dates = [d for d in set(dates) if d]
+    if not dates:
+        return
+    with get_engine().begin() as conn:
+        conn.execute(delete(foot_traffic).where(
+            foot_traffic.c.source == source,
+            foot_traffic.c.date_range_start.in_(dates)))
 
 
 if __name__ == "__main__":

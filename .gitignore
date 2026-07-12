@@ -4,7 +4,7 @@ __pycache__/
 data/*.sqlite
 data/dewey_raw/
 data/stores_raw.json
-data/scrape.log
+data/*.log
 # secrets -- never commit real values
 .env
 .streamlit/secrets.toml

@@ -24,6 +24,7 @@ adjust COLS if your licensed dataset differs (inspect one downloaded CSV).
 """
 from __future__ import annotations
 
+import datetime as dt
 import glob
 import sys
 from pathlib import Path
@@ -68,12 +69,15 @@ def download(date_start: str, date_end: str) -> Path:
             '  pip install "git+https://github.com/Dewey-Data/deweydatapy"')
 
     config.DEWEY_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    log(f"[dewey] fetching file list for {date_start}..{date_end}")
-    files = ddp.get_file_list(
+    log(f"[dewey] downloading {date_start}..{date_end} -> {config.DEWEY_DOWNLOAD_DIR}")
+    # Current deweydatapy signature:
+    #   download_files1(apikey, product_path, dest_folder, start_date, end_date, ...)
+    # It fetches the file list AND downloads in one call, filtered by date range.
+    # (download_files1 pages the downloads, best for large/long pulls.)
+    ddp.download_files1(
         config.DEWEY_API_KEY, config.DEWEY_PRODUCT_PATH,
-        start_date=date_start, end_date=date_end, print_info=True)
-    # download_files1 is recommended for large/long downloads.
-    ddp.download_files1(files, str(config.DEWEY_DOWNLOAD_DIR))
+        str(config.DEWEY_DOWNLOAD_DIR),
+        start_date=date_start, end_date=date_end, skip_exists=True)
     log(f"[dewey] downloaded into {config.DEWEY_DOWNLOAD_DIR}")
     return config.DEWEY_DOWNLOAD_DIR
 
@@ -91,7 +95,11 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
         raise SystemExit(f"No downloaded files in {folder}. Run download() first.")
 
     db.init_db()
-    total = 0
+    # Accumulate all Boot Barn rows across every partition file FIRST. A single
+    # week is split across many files that share the same date_range_start, so we
+    # must collect everything before touching the DB -- otherwise a per-file
+    # delete-then-insert would wipe rows another file just added.
+    all_rows: list[dict] = []
     for f in files:
         log(f"[dewey] reading {f.name}")
         reader = (pd.read_parquet(f) if f.suffix == ".parquet"
@@ -104,7 +112,6 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
                     .str.contains(config.BOOTBARN_NAME_MATCH, na=False)]
         if bb.empty:
             continue
-        rows = []
         for _, r in bb.iterrows():
             rec = {"store_id": None, "source": source}
             for field, cands in COLS.items():
@@ -120,21 +127,72 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
                 else:
                     val = str(val)
                 rec[field] = val
-            rows.append(rec)
-        db.insert_foot_traffic(rows)
-        total += len(rows)
-        log(f"  + {len(rows)} Boot Barn rows")
-    log(f"[dewey] done: loaded {total} foot-traffic rows.")
-    return total
+            all_rows.append(rec)
+        log(f"  + {len(bb)} Boot Barn rows")
+
+    if not all_rows:
+        log("[dewey] no Boot Barn rows found -- check column mapping (COLS).")
+        return 0
+
+    # Idempotent load: replace any existing rows for the weeks we're loading, so
+    # re-running (or overlapping sync windows) never creates duplicates.
+    dates = {r["date_range_start"] for r in all_rows}
+    db.delete_foot_traffic_dates(source, dates)
+    db.insert_foot_traffic(all_rows)
+    log(f"[dewey] done: loaded {len(all_rows)} rows across {len(dates)} weeks.")
+    return len(all_rows)
+
+
+def sync(overlap_weeks: int = 2, first_run_weeks: int = 12,
+         cleanup: bool = True) -> int:
+    """Hands-off update: download only NEW weeks, load them, tidy up.
+
+    Looks at the latest week already in the database and downloads from a little
+    before that up to today (the small overlap catches late-arriving data, and
+    the idempotent load dedupes it). On the very first run it grabs the last
+    `first_run_weeks`. With `cleanup`, the bulky raw files are deleted after a
+    successful load so disk usage stays flat -- because we only fetch new weeks,
+    each run stays small.
+    """
+    end = dt.date.today()
+    last = db.max_foot_traffic_date()
+    if last:
+        last_day = dt.date.fromisoformat(str(last)[:10])
+        start = last_day - dt.timedelta(weeks=overlap_weeks)
+        log(f"[dewey] sync: latest loaded week is {last_day}; "
+            f"fetching {start}..{end}")
+    else:
+        start = end - dt.timedelta(weeks=first_run_weeks)
+        log(f"[dewey] sync: first run, fetching last {first_run_weeks} weeks "
+            f"({start}..{end})")
+
+    download(start.isoformat(), end.isoformat())
+    n = load_to_db()
+
+    if cleanup:
+        removed = 0
+        for f in _iter_downloaded(config.DEWEY_DOWNLOAD_DIR):
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass
+        log(f"[dewey] cleaned up {removed} raw files.")
+    return n
 
 
 if __name__ == "__main__":
     # Usage:
+    #   python -m bbxray.ingest_dewey sync                      (automated: new weeks only)
+    #   python -m bbxray.ingest_dewey sync --no-cleanup         (keep raw files)
     #   python -m bbxray.ingest_dewey download 2025-01-01 2025-06-30
     #   python -m bbxray.ingest_dewey load
-    if len(sys.argv) >= 2 and sys.argv[1] == "download":
+    cmd = sys.argv[1] if len(sys.argv) >= 2 else ""
+    if cmd == "sync":
+        sync(cleanup="--no-cleanup" not in sys.argv)
+    elif cmd == "download":
         download(sys.argv[2], sys.argv[3])
-    elif len(sys.argv) >= 2 and sys.argv[1] == "load":
+    elif cmd == "load":
         load_to_db()
     else:
         print(__doc__)
