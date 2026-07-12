@@ -111,18 +111,26 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
     # delete-then-insert would wipe rows another file just added.
     wanted = {c for cands in COLS.values() for c in cands}
     all_rows: list[dict] = []
+    skipped = 0
     for f in files:
         log(f"[dewey] reading {f.name}")
-        if f.suffix == ".parquet":
-            # Only read the handful of columns we need -- these files have ~38
-            # columns and are ~430MB each; reading all of them would be slow and
-            # memory-heavy.
-            import pyarrow.parquet as pq
-            avail = pq.ParquetFile(f).schema.names
-            use = [c for c in avail if c in wanted]
-            reader = pd.read_parquet(f, columns=use or None)
-        else:
-            reader = pd.read_csv(f, compression="infer", low_memory=False)
+        try:
+            if f.suffix == ".parquet":
+                # Only read the handful of columns we need -- avoids loading all
+                # ~38 columns of each file.
+                import pyarrow.parquet as pq
+                avail = pq.ParquetFile(f).schema.names
+                use = [c for c in avail if c in wanted]
+                reader = pd.read_parquet(f, columns=use or None)
+            else:
+                reader = pd.read_csv(f, compression="infer", low_memory=False)
+        except Exception as e:
+            # Failed downloads sometimes land as tiny HTML error pages (Cloudflare
+            # "Worker threw exception"). Skip them rather than aborting the load.
+            skipped += 1
+            log(f"  ! unreadable ({type(e).__name__}); skipping -- likely a failed "
+                "download. Delete it and re-run `download` to refetch that week.")
+            continue
         name_col = _first_col(reader, COLS["location_name"])
         if name_col is None:
             log(f"  ! no location_name column in {f.name}; skipping")
@@ -165,7 +173,8 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
     dates = {r["date_range_start"] for r in all_rows}
     db.delete_foot_traffic_dates(source, dates)
     db.insert_foot_traffic(all_rows)
-    log(f"[dewey] done: loaded {len(all_rows)} rows across {len(dates)} weeks.")
+    log(f"[dewey] done: loaded {len(all_rows)} rows across {len(dates)} weeks"
+        f"{f' (skipped {skipped} unreadable files)' if skipped else ''}.")
     return len(all_rows)
 
 
