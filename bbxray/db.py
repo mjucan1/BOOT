@@ -46,6 +46,7 @@ price_snapshots = Table(
     Column("availability", Text),
     Column("in_stock", Integer),
     Column("map_hidden", Integer),
+    Column("source", Text),   # 'live' (weekly scrape) or 'wayback' (backfill)
 )
 
 store_snapshots = Table(
@@ -86,10 +87,13 @@ foot_traffic = Table(
     Column("postal_code", Text),
 )
 
-# Columns added after foot_traffic first shipped; ensure they exist on upgrade.
-_FOOT_EXTRA_COLS = {
-    "latitude": "DOUBLE PRECISION", "longitude": "DOUBLE PRECISION",
-    "open_date": "TEXT", "street_address": "TEXT", "postal_code": "TEXT",
+# Columns added after tables first shipped; ensure they exist on upgrade.
+_MIGRATIONS = {
+    "foot_traffic": {
+        "latitude": "DOUBLE PRECISION", "longitude": "DOUBLE PRECISION",
+        "open_date": "TEXT", "street_address": "TEXT", "postal_code": "TEXT",
+    },
+    "price_snapshots": {"source": "TEXT"},
 }
 
 _engine = None
@@ -109,14 +113,15 @@ def get_engine():
 def init_db() -> None:
     eng = get_engine()
     metadata.create_all(eng)
-    # Lightweight migration: add newer foot_traffic columns to a pre-existing
-    # table. ADD COLUMN is a no-op error if it already exists -> swallow it.
-    for col, typ in _FOOT_EXTRA_COLS.items():
-        try:
-            with eng.begin() as conn:
-                conn.execute(text(f"ALTER TABLE foot_traffic ADD COLUMN {col} {typ}"))
-        except Exception:
-            pass
+    # Lightweight migration: add newer columns to pre-existing tables. ADD COLUMN
+    # errors if the column already exists -> swallow it.
+    for tbl, cols in _MIGRATIONS.items():
+        for col, typ in cols.items():
+            try:
+                with eng.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}"))
+            except Exception:
+                pass
 
 
 def _insert(table: Table, rows: list[dict]) -> None:

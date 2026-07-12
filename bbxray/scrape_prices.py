@@ -167,6 +167,7 @@ def parse_pdp(html: str, url: str) -> dict | None:
         "availability": (availability or None),
         "in_stock": 1 if availability.lower() == "instock" else 0,
         "map_hidden": 1 if map_hidden else 0,
+        "source": "live",
     }
 
 
