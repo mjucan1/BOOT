@@ -77,6 +77,38 @@ def quarter(ts: pd.Series) -> pd.Series:
     return d.dt.year.astype("Int64").astype(str) + "-Q" + d.dt.quarter.astype("Int64").astype(str)
 
 
+def store_first_seen(stores_df: pd.DataFrame) -> pd.DataFrame:
+    """Per store_id, the earliest snapshot we ever captured it in. As weekly
+    snapshots accrue, a store's first_seen marks when WE detected it (a proxy for
+    opening, for stores that appear after we start tracking)."""
+    fs = stores_df.groupby("store_id")["run_ts"].min().reset_index(name="first_seen")
+    d = pd.to_datetime(fs["first_seen"], errors="coerce", utc=True)
+    fs["first_seen_year"] = d.dt.year.astype("Int64")
+    fs["first_seen_quarter"] = quarter(fs["first_seen"])
+    return fs
+
+
+@st.cache_data(ttl=300)
+def load_open_dates() -> pd.DataFrame:
+    """Optional enrichment: real store opening years from data/store_open_dates.csv
+    (columns: store_id, and either opened_year or opened_date). Populate it from
+    Advan OPEN_DATE, Boot Barn disclosures, or research to get TRUE vintages.
+    Returns empty frame if the file is absent -- the dashboard then falls back to
+    first-detected year."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "data", "store_open_dates.csv")
+    try:
+        df = pd.read_csv(path, dtype={"store_id": str})
+        df["store_id"] = df["store_id"].str.strip()
+        if "opened_year" not in df.columns and "opened_date" in df.columns:
+            df["opened_year"] = pd.to_datetime(
+                df["opened_date"], errors="coerce").dt.year
+        df["opened_year"] = pd.to_numeric(df["opened_year"], errors="coerce").astype("Int64")
+        return df[["store_id", "opened_year"]].dropna(subset=["opened_year"])
+    except Exception:
+        return pd.DataFrame(columns=["store_id", "opened_year"])
+
+
 st.title("🥾 Boot Barn X-Ray")
 st.caption("Competitive intelligence: pricing · store footprint · foot traffic")
 
@@ -135,6 +167,65 @@ with tab_price:
             right.plotly_chart(px.bar(by_cat, x="category", y="median",
                                       hover_data=["count"]), width='stretch')
 
+        # ---- Category deep-dive: pick a category, watch prices trend over time --
+        st.divider()
+        st.subheader("📂 Category deep-dive")
+        cats = sorted(c for c in prices["category"].dropna().unique() if str(c).strip())
+        if not cats:
+            st.info("No category labels captured yet.")
+        else:
+            sel = st.selectbox("Category", cats,
+                               index=cats.index("Jeans") if "Jeans" in cats else 0)
+            sub = prices[prices["category"] == sel].copy()
+            sub["eff_price"] = sub["sale_price"].fillna(sub["list_price"])
+            sub["discount_pct"] = (
+                (sub["list_price"] - sub["eff_price"]) / sub["list_price"] * 100
+            ).where(sub["list_price"] > 0)
+            latest_sub = latest_snapshot(sub)
+
+            k1, k2, k3 = st.columns(3)
+            k1.metric(f"{sel} products", f"{latest_sub['product_id'].nunique():,}")
+            k2.metric("Median price", f"${latest_sub['eff_price'].median():,.2f}")
+            d = latest_sub["discount_pct"][latest_sub["discount_pct"] > 0]
+            k3.metric("Avg discount", f"{d.mean():.0f}%" if len(d) else "—")
+
+            trend = (sub.groupby("run_ts")
+                     .agg(median_price=("eff_price", "median"),
+                          avg_price=("eff_price", "mean"),
+                          products=("product_id", "nunique")).reset_index())
+            trend["date"] = pd.to_datetime(trend["run_ts"], errors="coerce", utc=True)
+            if len(trend) > 1:
+                st.markdown(f"**{sel} — median & average price over time**")
+                melt = trend.melt(id_vars="date",
+                                  value_vars=["median_price", "avg_price"],
+                                  var_name="metric", value_name="price")
+                st.plotly_chart(px.line(melt, x="date", y="price", color="metric",
+                                        markers=True), width='stretch')
+
+                st.markdown(f"**Biggest price moves in {sel}** (first → latest snapshot)")
+                piv = sub.pivot_table(index=["product_id", "name"], columns="run_ts",
+                                      values="eff_price", aggfunc="last")
+                moves = piv[[piv.columns.min(), piv.columns.max()]].reset_index()
+                moves.columns = ["product_id", "name", "first_price", "latest_price"]
+                moves["change"] = moves["latest_price"] - moves["first_price"]
+                moves = moves.dropna(subset=["change"])
+                moves = moves[moves["change"] != 0].sort_values("change")
+                if not moves.empty:
+                    st.dataframe(moves, width='stretch', hide_index=True)
+                else:
+                    st.caption("No price changes detected in this category yet.")
+            else:
+                st.info(f"Only one snapshot so far — the **{sel}** price-trend line "
+                        f"builds up as you collect weekly data. Right now: median "
+                        f"${latest_sub['eff_price'].median():,.2f} across "
+                        f"{latest_sub['product_id'].nunique()} products.")
+
+            st.markdown(f"**Current {sel} products**")
+            st.dataframe(
+                latest_sub[["name", "brand", "list_price", "sale_price", "eff_price",
+                            "discount_pct", "availability", "url"]]
+                .sort_values("eff_price"), width='stretch', hide_index=True)
+
         # Price changes over time (needs >=2 snapshots).
         if prices["run_ts"].nunique() > 1:
             st.subheader("Median effective price over time")
@@ -177,7 +268,71 @@ with tab_store:
         st.plotly_chart(px.bar(by_state, x="state", y="stores"),
                         width='stretch')
 
+        # ---- Store vintages: cluster stores by opening year ----
+        st.divider()
+        st.subheader("🏗️ Store vintages")
+        fs = store_first_seen(stores)
+        opendates = load_open_dates()
+        v = cur.merge(fs, on="store_id", how="left").merge(
+            opendates, on="store_id", how="left")
+        has_real = 0 if opendates.empty else int(opendates["store_id"].nunique())
+        v["vintage"] = v["opened_year"].fillna(v["first_seen_year"]).astype("Int64")
+        v["source"] = v["opened_year"].notna().map(
+            {True: "year opened", False: "first detected"})
+        if has_real:
+            st.caption(f"{has_real} stores use a real opening year from "
+                       "data/store_open_dates.csv; the rest fall back to the year "
+                       "we first detected them.")
+        else:
+            st.warning(
+                "No opening-date source yet, so vintages currently show the **year "
+                "we first detected** each store (all the same until weekly history "
+                "builds). For TRUE vintages, add `data/store_open_dates.csv` with "
+                "columns `store_id,opened_year` (e.g. from Advan OPEN_DATE) — this "
+                "chart switches to real opening years the moment that file exists.")
+        by_vin = (v.groupby(["vintage", "source"])["store_id"].nunique()
+                  .reset_index(name="stores"))
+        by_vin["vintage"] = by_vin["vintage"].astype(str)
+        st.plotly_chart(px.bar(by_vin, x="vintage", y="stores", color="source",
+                               labels={"vintage": "Opening year (vintage)"}),
+                        width='stretch')
+        vint_options = sorted(int(x) for x in v["vintage"].dropna().unique())
+        if vint_options:
+            pick = st.selectbox("Inspect a vintage", vint_options,
+                                index=len(vint_options) - 1)
+            st.dataframe(
+                v[v["vintage"] == pick][["store_id", "name", "city", "state",
+                                         "zip", "source", "url"]]
+                .sort_values(["state", "city"]), width='stretch', hide_index=True)
+
+        # ---- New store openings detected over time ----
+        st.divider()
+        st.subheader("🆕 New store openings detected")
+        if stores["run_ts"].nunique() < 2:
+            st.info("As weekly snapshots accumulate, stores that newly appear get "
+                    "logged here as openings, grouped by the quarter we first saw "
+                    "them. (Needs 2+ snapshots on different dates to begin.)")
+        else:
+            first_snap = min(stores["run_ts"])
+            newly = fs[fs["first_seen"] > first_snap]
+            per_q = (newly.groupby("first_seen_quarter")["store_id"].nunique()
+                     .reset_index(name="new_stores"))
+            if not per_q.empty:
+                st.plotly_chart(px.bar(per_q, x="first_seen_quarter", y="new_stores",
+                                       labels={"first_seen_quarter": "Quarter first seen"}),
+                                width='stretch')
+            latest_ts = max(stores["run_ts"])
+            just = newly[newly["first_seen"] == latest_ts]
+            st.markdown(f"**Newly detected in the latest snapshot: "
+                        f"{just['store_id'].nunique()}**")
+            if not just.empty:
+                st.dataframe(
+                    cur[cur["store_id"].isin(just["store_id"])][
+                        ["store_id", "name", "city", "state", "zip", "url"]],
+                    width='stretch', hide_index=True)
+
         # ---- Openings / closures via snapshot diff ----
+        st.divider()
         st.subheader("Openings & closures (snapshot diff)")
         if len(snap_dates) < 2:
             st.info("Need at least two snapshots on different dates to detect "
