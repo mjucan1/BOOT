@@ -52,6 +52,16 @@ PROXY_URL = os.environ.get("BBXRAY_PROXY", "").strip()
 # Full catalog is large; cap per-run so a first run is quick. Set to 0 = no cap.
 MAX_PRODUCTS = int(os.environ.get("BBXRAY_MAX_PRODUCTS", "500"))
 
+# --- Private-label brand DTC sites (Shopify) ---------------------------------
+# Boot Barn's exclusive brands run their own Shopify stores, which expose every
+# product/price at {site}/products.json. brand -> domain. Add/remove freely.
+BRAND_SITES = {
+    "Idyllwind": "idyllwind.com",
+    "Cody James": "codyjames.com",
+    "Shyanne": "shyanne.com",
+    "Moonshine Spirit": "moonshinespirit.com",
+}
+
 # --- Foot traffic (Dewey) ----------------------------------------------------
 DEWEY_API_KEY = os.environ.get("DEWEY_API_KEY", "")
 # Product path for the dataset you licensed on Dewey (e.g. Advan Monthly Patterns).

@@ -116,14 +116,16 @@ st.caption("Competitive intelligence: pricing · store footprint · foot traffic
 prices = load("price_snapshots")
 stores = load("store_snapshots")
 foot = load("foot_traffic")
+brands = load("brand_prices")
 runs = load("runs")
 
 if prices.empty and stores.empty:
     st.warning("No data yet. Run the scrapers first:  `python run.py all`")
     st.stop()
 
-tab_price, tab_store, tab_foot, tab_cann = st.tabs(
-    ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization"])
+tab_price, tab_store, tab_foot, tab_cann, tab_brand = st.tabs(
+    ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization",
+     "🏷️ Private Labels"])
 
 # ---------------------------------------------------------------- Pricing ----
 with tab_price:
@@ -537,6 +539,73 @@ with tab_cann:
                     px.scatter_geo(mp.dropna(subset=["lat", "lng"]), lat="lat",
                                    lon="lng", color="role", scope="usa",
                                    hover_name="city"), width='stretch')
+
+# ------------------------------------------------------------ Private labels --
+with tab_brand:
+    st.subheader("🏷️ Private-label brands (their own Shopify sites)")
+    st.caption("Boot Barn's exclusive brands (Idyllwind, Cody James, Shyanne, "
+               "Moonshine Spirit) run direct-to-consumer Shopify stores. This "
+               "pulls their full catalog + prices straight from Shopify.")
+    if brands.empty:
+        st.info("No private-label data yet. Run `python run.py brands`.")
+    else:
+        cur = latest_snapshot(brands).copy()
+        options = ["All"] + sorted(cur["brand"].dropna().unique())
+        pick = st.selectbox("Brand", options)
+        d = (cur if pick == "All" else cur[cur["brand"] == pick]).copy()
+        d["disc"] = ((d["compare_at_price"] - d["price"]) / d["compare_at_price"]
+                     * 100).where(d["on_sale"] == 1)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Products", f"{d['product_id'].nunique():,}")
+        c2.metric("Median price", f"${d['price'].median():,.2f}")
+        c3.metric("On sale", f"{(d['on_sale'] == 1).mean() * 100:.0f}%")
+        dd = d["disc"].dropna()
+        c4.metric("Avg discount", f"{dd.mean():.0f}%" if len(dd) else "—")
+
+        if pick == "All":
+            by_brand = (d.groupby("brand")
+                        .agg(products=("product_id", "nunique"),
+                             median_price=("price", "median"),
+                             on_sale=("on_sale", "mean")).reset_index()
+                        .sort_values("products", ascending=False))
+            by_brand["on_sale"] = (by_brand["on_sale"] * 100).round(0)
+            st.subheader("Products & median price by brand")
+            st.plotly_chart(px.bar(by_brand, x="brand", y="products",
+                                   hover_data=["median_price", "on_sale"]),
+                            width='stretch')
+
+        left, right = st.columns(2)
+        left.subheader("Price distribution")
+        left.plotly_chart(px.histogram(d.dropna(subset=["price"]), x="price",
+                                       nbins=40, labels={"price": "Price ($)"}),
+                          width='stretch')
+        by_type = (d.groupby("product_type")["price"].agg(["median", "count"])
+                   .reset_index().sort_values("count", ascending=False).head(20))
+        right.subheader("Median price by product type")
+        right.plotly_chart(px.bar(by_type, x="product_type", y="median",
+                                  hover_data=["count"]), width='stretch')
+
+        if brands["run_ts"].nunique() > 1:
+            st.subheader("Median price over time")
+            b = brands if pick == "All" else brands[brands["brand"] == pick]
+            trend = b.groupby("run_ts")["price"].median().reset_index()
+            st.plotly_chart(px.line(trend, x="run_ts", y="price", markers=True),
+                            width='stretch')
+
+        st.subheader("Recently launched products")
+        d2 = d.copy()
+        d2["launched"] = pd.to_datetime(d2["product_created_at"], errors="coerce",
+                                        utc=True)
+        recent = d2.sort_values("launched", ascending=False).head(25)
+        st.dataframe(recent[["launched", "brand", "title", "product_type", "price",
+                             "compare_at_price", "on_sale", "url"]],
+                     width='stretch', hide_index=True)
+
+        st.subheader("Product table")
+        st.dataframe(d[["brand", "title", "product_type", "price",
+                        "compare_at_price", "on_sale", "available", "url"]]
+                     .sort_values("price"), width='stretch', hide_index=True)
 
 with st.sidebar:
     st.header("Run log")

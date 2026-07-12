@@ -96,6 +96,26 @@ _MIGRATIONS = {
     "price_snapshots": {"source": "TEXT"},
 }
 
+brand_prices = Table(
+    "brand_prices", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_ts", Text, nullable=False, index=True),
+    Column("brand", Text, index=True),
+    Column("site", Text),
+    Column("product_id", Text, index=True),
+    Column("handle", Text),
+    Column("title", Text),
+    Column("product_type", Text),
+    Column("price", Float),
+    Column("compare_at_price", Float),   # Shopify MSRP/list -> sale detection
+    Column("on_sale", Integer),
+    Column("available", Integer),
+    Column("n_variants", Integer),
+    Column("url", Text),
+    Column("product_created_at", Text),  # when the SKU launched on Shopify
+    Column("published_at", Text),
+)
+
 _engine = None
 
 
@@ -147,6 +167,10 @@ def insert_stores(rows: list[dict]) -> None:
 
 def insert_foot_traffic(rows: list[dict]) -> None:
     _insert(foot_traffic, rows)
+
+
+def insert_brand_prices(rows: list[dict]) -> None:
+    _insert(brand_prices, rows)
 
 
 def max_foot_traffic_date() -> str | None:

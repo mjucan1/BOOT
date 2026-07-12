@@ -4,14 +4,15 @@ Examples:
   python run.py prices           # scrape pricing (respects BBXRAY_MAX_PRODUCTS)
   python run.py prices 100       # scrape only 100 products (quick test)
   python run.py stores           # snapshot the full store roster
-  python run.py all              # prices + stores
+  python run.py brands           # snapshot private-label Shopify sites
+  python run.py all              # prices + stores + brands
   python run.py initdb           # just create the SQLite schema
 """
 from __future__ import annotations
 
 import sys
 
-from bbxray import db, scrape_prices, scrape_stores
+from bbxray import db, scrape_prices, scrape_shopify, scrape_stores
 
 
 def main(argv: list[str]) -> int:
@@ -24,9 +25,12 @@ def main(argv: list[str]) -> int:
         scrape_prices.run(limit)
     elif cmd == "stores":
         scrape_stores.run()
+    elif cmd == "brands":
+        scrape_shopify.run()
     elif cmd == "all":
         scrape_prices.run()
         scrape_stores.run()
+        scrape_shopify.run()
     else:
         print(__doc__)
         return 1
