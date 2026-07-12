@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data/*.sqlite
+data/dewey_raw/
+data/stores_raw.json
+data/scrape.log
+# secrets -- never commit real values
+.env
+.streamlit/secrets.toml
