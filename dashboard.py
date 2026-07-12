@@ -8,6 +8,7 @@ Reads the SQLite DB populated by the scrapers and visualizes:
 """
 from __future__ import annotations
 
+import calendar
 import os
 
 import pandas as pd
@@ -381,6 +382,57 @@ with tab_foot:
         ts = f.groupby("date")["raw_visit_counts"].sum().reset_index()
         st.plotly_chart(px.line(ts, x="date", y="raw_visit_counts", markers=True),
                         width='stretch')
+
+        # ---- Year-over-year by month ----
+        st.subheader("Year-over-year by month")
+        fm = f.dropna(subset=["date"]).copy()
+        fm["year"] = fm["date"].dt.year
+        fm["month"] = fm["date"].dt.month
+        # total visits + #weeks per (year, month); avg weekly = fair across months
+        # that have different numbers of (or missing) weeks.
+        g = (fm.groupby(["year", "month"])
+             .agg(visits=("raw_visit_counts", "sum"), weeks=("date", "nunique"))
+             .reset_index())
+        g["avg_weekly"] = g["visits"] / g["weeks"]
+
+        if g["year"].nunique() < 2:
+            st.info("Year-over-year needs at least two calendar years of data. "
+                    "It fills in as history accrues.")
+        else:
+            gp = g.copy()
+            gp["year"] = gp["year"].astype(str)
+            fig = px.line(gp.sort_values(["year", "month"]), x="month", y="avg_weekly",
+                          color="year", markers=True,
+                          labels={"avg_weekly": "Avg weekly visits", "month": "Month",
+                                  "year": "Year"})
+            fig.update_xaxes(tickmode="array", tickvals=list(range(1, 13)),
+                             ticktext=[calendar.month_abbr[m] for m in range(1, 13)])
+            st.plotly_chart(fig, width='stretch')
+            st.caption("Each line is a year; uses **average weekly visits per month** "
+                       "so months with missing or partial weeks compare fairly. "
+                       "The current month may be partial.")
+
+            # Y/Y % change: same month vs the prior year.
+            piv = g.pivot(index="month", columns="year", values="avg_weekly")
+            years = sorted(piv.columns)
+            yy = []
+            for prev_y, cur_y in zip(years, years[1:]):
+                for m in piv.index:
+                    cur, prev = piv.loc[m, cur_y], piv.loc[m, prev_y]
+                    if pd.notna(cur) and pd.notna(prev) and prev > 0:
+                        yy.append({"month": calendar.month_abbr[m], "month_num": m,
+                                   "comparison": f"{cur_y} vs {prev_y}",
+                                   "yoy_pct": (cur / prev - 1) * 100})
+            yy = pd.DataFrame(yy)
+            if not yy.empty:
+                st.markdown("**Y/Y growth by month** (avg weekly visits vs the same "
+                            "month a year earlier)")
+                st.plotly_chart(
+                    px.bar(yy.sort_values("month_num"), x="month", y="yoy_pct",
+                           color="comparison", barmode="group",
+                           labels={"yoy_pct": "Y/Y change (%)", "month": "Month",
+                                   "comparison": ""}),
+                    width='stretch')
 
         st.subheader("Visits by state")
         by_reg = f.groupby("region")["raw_visit_counts"].sum().reset_index(
