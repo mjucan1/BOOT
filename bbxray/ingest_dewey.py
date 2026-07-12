@@ -36,15 +36,17 @@ import config  # noqa: E402
 from bbxray import db  # noqa: E402
 from bbxray.utils import log  # noqa: E402
 
-# Map dataset columns -> our schema. Left = our field, right = candidates.
+# Map dataset columns -> our schema. Left = our field, right = candidates (first
+# match wins). Advan Weekly Patterns Plus uses PERSISTENT_ID_STORE as the stable
+# per-store id (no placekey) and VISIT[OR]_COUNTS (not RAW_*).
 COLS = {
-    "placekey": ["PLACEKEY", "placekey"],
+    "placekey": ["PERSISTENT_ID_STORE", "PERSISTENT_ID", "ID_STORE", "PLACEKEY", "placekey"],
     "location_name": ["LOCATION_NAME", "location_name"],
     "city": ["CITY", "city"],
     "region": ["REGION", "region", "STATE", "state"],
     "date_range_start": ["DATE_RANGE_START", "date_range_start", "MONTH", "spend_date_range_start"],
-    "raw_visit_counts": ["RAW_VISIT_COUNTS", "raw_visit_counts"],
-    "raw_visitor_counts": ["RAW_VISITOR_COUNTS", "raw_visitor_counts"],
+    "raw_visit_counts": ["VISIT_COUNTS", "RAW_VISIT_COUNTS", "raw_visit_counts"],
+    "raw_visitor_counts": ["VISITOR_COUNTS", "RAW_VISITOR_COUNTS", "raw_visitor_counts"],
 }
 
 
@@ -99,11 +101,20 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
     # week is split across many files that share the same date_range_start, so we
     # must collect everything before touching the DB -- otherwise a per-file
     # delete-then-insert would wipe rows another file just added.
+    wanted = {c for cands in COLS.values() for c in cands}
     all_rows: list[dict] = []
     for f in files:
         log(f"[dewey] reading {f.name}")
-        reader = (pd.read_parquet(f) if f.suffix == ".parquet"
-                  else pd.read_csv(f, compression="infer", low_memory=False))
+        if f.suffix == ".parquet":
+            # Only read the handful of columns we need -- these files have ~38
+            # columns and are ~430MB each; reading all of them would be slow and
+            # memory-heavy.
+            import pyarrow.parquet as pq
+            avail = pq.ParquetFile(f).schema.names
+            use = [c for c in avail if c in wanted]
+            reader = pd.read_parquet(f, columns=use or None)
+        else:
+            reader = pd.read_csv(f, compression="infer", low_memory=False)
         name_col = _first_col(reader, COLS["location_name"])
         if name_col is None:
             log(f"  ! no location_name column in {f.name}; skipping")
@@ -124,6 +135,8 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
                         val = None
                 elif pd.isna(val):
                     val = None
+                elif field == "date_range_start":
+                    val = str(val)[:10]   # "2025-06-02 00:00:00+00:00" -> "2025-06-02"
                 else:
                     val = str(val)
                 rec[field] = val
@@ -144,7 +157,7 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
 
 
 def sync(overlap_weeks: int = 2, first_run_weeks: int = 12,
-         cleanup: bool = True) -> int:
+         max_backfill_weeks: int = 12, cleanup: bool = True) -> int:
     """Hands-off update: download only NEW weeks, load them, tidy up.
 
     Looks at the latest week already in the database and downloads from a little
@@ -153,6 +166,12 @@ def sync(overlap_weeks: int = 2, first_run_weeks: int = 12,
     `first_run_weeks`. With `cleanup`, the bulky raw files are deleted after a
     successful load so disk usage stays flat -- because we only fetch new weeks,
     each run stays small.
+
+    SAFETY CAP: this national dataset is huge (~5GB per week), so `sync` never
+    downloads more than `max_backfill_weeks` in a single run. If the DB is far
+    behind (e.g. only stale test data is loaded), it pulls just the most recent
+    window and warns -- rather than trying to backfill a year at hundreds of GB.
+    Do large historical backfills deliberately with explicit `download` + `load`.
     """
     end = dt.date.today()
     last = db.max_foot_traffic_date()
@@ -165,6 +184,13 @@ def sync(overlap_weeks: int = 2, first_run_weeks: int = 12,
         start = end - dt.timedelta(weeks=first_run_weeks)
         log(f"[dewey] sync: first run, fetching last {first_run_weeks} weeks "
             f"({start}..{end})")
+
+    floor = end - dt.timedelta(weeks=max_backfill_weeks)
+    if start < floor:
+        log(f"[dewey] WARNING: would fetch from {start}, but that's more than "
+            f"{max_backfill_weeks} weeks. Capping to {floor}. There will be a "
+            f"gap before {floor}; backfill it manually with `download` if needed.")
+        start = floor
 
     download(start.isoformat(), end.isoformat())
     n = load_to_db()
