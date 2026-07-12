@@ -593,6 +593,61 @@ with tab_brand:
             st.plotly_chart(px.line(trend, x="run_ts", y="price", markers=True),
                             width='stretch')
 
+        # ---- Cross-channel: DTC site vs. Boot Barn catalog ----
+        st.divider()
+        st.subheader("🔀 DTC site vs. Boot Barn catalog")
+        st.caption("Same brand, two channels — its own Shopify store vs. inside "
+                   "bootbarn.com — showing whether Boot Barn prices its private "
+                   "labels differently by channel.")
+        from bbxray.scrape_prices import classify_category
+        live = prices[prices["source"] != "wayback"] if "source" in prices else prices
+        cat_latest = latest_snapshot(live)
+        summ = []
+        for c in config.BRAND_SITES:
+            db_ = latest_snapshot(brands[brands["brand"].astype(str)
+                                  .str.contains(c, case=False, na=False)])
+            cb = cat_latest[cat_latest["brand"] == c]
+            cb_eff = cb["sale_price"].fillna(cb["list_price"])
+            if db_.empty and cb.empty:
+                continue
+            summ.append({
+                "brand": c,
+                "DTC median": round(db_["price"].median(), 2) if not db_.empty else None,
+                "DTC n": int(db_["product_id"].nunique()),
+                "Catalog median": round(cb_eff.median(), 2) if not cb.empty else None,
+                "Catalog n": int(cb["product_id"].nunique()),
+            })
+        sdf = pd.DataFrame(summ)
+        if sdf.empty:
+            st.info("No overlapping brands between the DTC sites and the catalog yet.")
+        else:
+            sdf["Δ DTC−Catalog"] = (sdf["DTC median"] - sdf["Catalog median"]).round(2)
+            st.dataframe(sdf, width='stretch', hide_index=True)
+            st.caption("Small **Catalog n** = the main scrape samples only a few of "
+                       "each brand; raise BBXRAY_MAX_PRODUCTS for a tighter read.")
+
+            bsel = st.selectbox("Category breakdown", sdf["brand"].tolist())
+            dbb = latest_snapshot(brands[brands["brand"].astype(str)
+                                  .str.contains(bsel, case=False, na=False)]).copy()
+            dbb["cat"] = [classify_category(t, u) for t, u in
+                          zip(dbb["title"].fillna(""), dbb["url"].fillna(""))]
+            dbb["eff"] = dbb["price"]
+            dbb["channel"] = "DTC site"
+            cbb = cat_latest[cat_latest["brand"] == bsel].copy()
+            cbb["cat"] = cbb["category"]
+            cbb["eff"] = cbb["sale_price"].fillna(cbb["list_price"])
+            cbb["channel"] = "Catalog"
+            combo = pd.concat([dbb[["cat", "eff", "channel"]],
+                               cbb[["cat", "eff", "channel"]]], ignore_index=True
+                              ).dropna(subset=["cat", "eff"])
+            if not combo.empty:
+                bycat = (combo.groupby(["cat", "channel"])["eff"].median()
+                         .reset_index())
+                st.plotly_chart(
+                    px.bar(bycat, x="cat", y="eff", color="channel", barmode="group",
+                           labels={"eff": "Median price ($)", "cat": "Category",
+                                   "channel": ""}), width='stretch')
+
         st.subheader("Recently launched products")
         d2 = d.copy()
         d2["launched"] = pd.to_datetime(d2["product_created_at"], errors="coerce",
