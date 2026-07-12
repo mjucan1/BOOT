@@ -387,6 +387,24 @@ with tab_foot:
         st.plotly_chart(px.bar(by_reg, x="region", y="raw_visit_counts"),
                         width='stretch')
 
+        # ---- Visits over time, broken out by state ----
+        st.subheader("Visits over time by state")
+        all_states = by_reg["region"].dropna().tolist()          # already sorted desc
+        default_states = all_states[:6]
+        sel_states = st.multiselect("States to compare", all_states,
+                                    default=default_states)
+        if sel_states:
+            ss = (f[f["region"].isin(sel_states)]
+                  .groupby(["date", "region"])["raw_visit_counts"].sum()
+                  .reset_index())
+            st.plotly_chart(
+                px.line(ss, x="date", y="raw_visit_counts", color="region",
+                        markers=True, labels={"raw_visit_counts": "Visits",
+                                              "region": "State"}),
+                width='stretch')
+            st.caption("Tip: index each state to its own first week to compare "
+                       "*growth rates* rather than absolute volume.")
+
         st.subheader("Foot-traffic detail")
         st.dataframe(f, width='stretch', hide_index=True)
 

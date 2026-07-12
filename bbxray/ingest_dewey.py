@@ -47,7 +47,15 @@ COLS = {
     "date_range_start": ["DATE_RANGE_START", "date_range_start", "MONTH", "spend_date_range_start"],
     "raw_visit_counts": ["VISIT_COUNTS", "RAW_VISIT_COUNTS", "raw_visit_counts"],
     "raw_visitor_counts": ["VISITOR_COUNTS", "RAW_VISITOR_COUNTS", "raw_visitor_counts"],
+    # Per-store attributes (for mapping, vintages, cannibalization analysis).
+    "latitude": ["LATITUDE", "latitude"],
+    "longitude": ["LONGITUDE", "longitude"],
+    "open_date": ["OPEN_DATE", "open_date"],
+    "street_address": ["STREET_ADDRESS", "street_address"],
+    "postal_code": ["POSTAL_CODE", "postal_code", "ZIP", "zip"],
 }
+_FLOAT_FIELDS = {"latitude", "longitude"}
+_DATE_FIELDS = {"date_range_start", "open_date"}
 
 
 def _first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -135,7 +143,12 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
                         val = None
                 elif pd.isna(val):
                     val = None
-                elif field == "date_range_start":
+                elif field in _FLOAT_FIELDS:
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        val = None
+                elif field in _DATE_FIELDS:
                     val = str(val)[:10]   # "2025-06-02 00:00:00+00:00" -> "2025-06-02"
                 else:
                     val = str(val)

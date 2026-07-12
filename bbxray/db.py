@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import (Column, Float, Integer, MetaData, Table, Text,
-                        create_engine, delete, func, insert, select)
+                        create_engine, delete, func, insert, select, text)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: E402
@@ -77,7 +77,20 @@ foot_traffic = Table(
     Column("raw_visit_counts", Integer),
     Column("raw_visitor_counts", Integer),
     Column("source", Text),
+    # Per-store attributes from Advan (same feed) -- enable mapping + opening-date
+    # based analysis (store vintages, cannibalization).
+    Column("latitude", Float),
+    Column("longitude", Float),
+    Column("open_date", Text),
+    Column("street_address", Text),
+    Column("postal_code", Text),
 )
+
+# Columns added after foot_traffic first shipped; ensure they exist on upgrade.
+_FOOT_EXTRA_COLS = {
+    "latitude": "DOUBLE PRECISION", "longitude": "DOUBLE PRECISION",
+    "open_date": "TEXT", "street_address": "TEXT", "postal_code": "TEXT",
+}
 
 _engine = None
 
@@ -94,7 +107,16 @@ def get_engine():
 
 
 def init_db() -> None:
-    metadata.create_all(get_engine())
+    eng = get_engine()
+    metadata.create_all(eng)
+    # Lightweight migration: add newer foot_traffic columns to a pre-existing
+    # table. ADD COLUMN is a no-op error if it already exists -> swallow it.
+    for col, typ in _FOOT_EXTRA_COLS.items():
+        try:
+            with eng.begin() as conn:
+                conn.execute(text(f"ALTER TABLE foot_traffic ADD COLUMN {col} {typ}"))
+        except Exception:
+            pass
 
 
 def _insert(table: Table, rows: list[dict]) -> None:
