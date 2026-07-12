@@ -121,7 +121,8 @@ if prices.empty and stores.empty:
     st.warning("No data yet. Run the scrapers first:  `python run.py all`")
     st.stop()
 
-tab_price, tab_store, tab_foot = st.tabs(["💲 Pricing", "📍 Stores", "🚶 Foot Traffic"])
+tab_price, tab_store, tab_foot, tab_cann = st.tabs(
+    ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization"])
 
 # ---------------------------------------------------------------- Pricing ----
 with tab_price:
@@ -407,6 +408,83 @@ with tab_foot:
 
         st.subheader("Foot-traffic detail")
         st.dataframe(f, width='stretch', hide_index=True)
+
+# ----------------------------------------------------------- Cannibalization --
+with tab_cann:
+    st.subheader("🧭 Store cannibalization (difference-in-differences)")
+    st.caption("When Boot Barn opens a store, does it steal foot traffic from its "
+               "own nearby stores? We compare nearby ('exposed') stores' visit "
+               "change around each opening vs far-away ('control') stores over the "
+               "same weeks — the difference nets out seasonality and chain trends.")
+    need = (foot.empty
+            or "open_date" not in foot.columns or "latitude" not in foot.columns
+            or foot["open_date"].isna().all()
+            or foot["latitude"].isna().all()
+            or foot["date_range_start"].nunique() < 8)
+    if need:
+        st.info(
+            "**Not enough data yet.** This activates once the filtered Advan feed is "
+            "backfilled with store **OPEN_DATE** + **lat/lng** and a history spanning "
+            "openings (pre & post weeks). Backfill ~a year of the BOOT-only feed and "
+            "this fills in automatically.\n\n"
+            "**Method:** for each new opening, nearby existing stores are the "
+            "*exposed* group and far stores the *control*. The estimate is the "
+            "exposed group's %-visit change minus the control's — a negative value "
+            "means traffic was pulled from neighbors (cannibalization).")
+    else:
+        from bbxray import analysis
+        c1, c2 = st.columns(2)
+        radius = c1.slider("Neighbor radius (miles)", 2, 50, 15)
+        window = c2.slider("Pre/post window (weeks)", 4, 26, 8)
+        res = analysis.run_cannibalization(foot, radius_miles=radius,
+                                           window_weeks=window)
+        s = res["summary"]
+        if not s or s.get("n_openings", 0) == 0:
+            st.warning("No openings fall inside the data window with enough pre/post "
+                       "weeks yet. Widen the window or backfill more history.")
+        else:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Openings analyzed", s["n_openings"])
+            avg = s.get("avg_cannibalization_pts")
+            m2.metric("Avg cannibalization",
+                      f"{avg:+.1f} pts" if avg is not None else "—",
+                      help="Exposed stores' visit %-change minus control's. "
+                           "Negative = nearby stores lost traffic after the opening.")
+            m3.metric("Openings w/ negative effect",
+                      f"{s.get('share_negative')}%" if s.get("share_negative")
+                      is not None else "—")
+
+            es = res["event_study"]
+            if not es.empty:
+                st.markdown("**Event study — visits around opening week "
+                            "(pre-period = 100)**")
+                st.plotly_chart(
+                    px.line(es, x="rel", y="idx", color="grp", markers=True,
+                            labels={"rel": "Weeks relative to opening",
+                                    "idx": "Visit index", "grp": "Group"}),
+                    width='stretch')
+                st.caption("Exposed line dropping below control after week 0 is the "
+                           "cannibalization signal.")
+
+            st.markdown("**Per-opening detail** (most cannibalizing first)")
+            st.dataframe(res["openings"], width='stretch', hide_index=True)
+
+            labels = {f"{r['store']} — opened {r['open_date']}": r["placekey"]
+                      for _, r in res["openings"].iterrows()
+                      if r["placekey"] in res["neighbors"]}
+            if labels:
+                pick = st.selectbox("Map an opening + its exposed neighbors",
+                                    list(labels))
+                o, exposed = res["neighbors"][labels[pick]]
+                mp = pd.concat([
+                    pd.DataFrame([{"lat": o["lat"], "lng": o["lng"],
+                                   "role": "new opening", "city": o["city"]}]),
+                    exposed.assign(role="exposed neighbor")[
+                        ["lat", "lng", "role", "city"]]], ignore_index=True)
+                st.plotly_chart(
+                    px.scatter_geo(mp.dropna(subset=["lat", "lng"]), lat="lat",
+                                   lon="lng", color="role", scope="usa",
+                                   hover_name="city"), width='stretch')
 
 with st.sidebar:
     st.header("Run log")
