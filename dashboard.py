@@ -705,19 +705,16 @@ OUT_TEMPLATES = {
         "Hi {first},\n\nI came across your background at {company} and I'm doing "
         "independent research to better understand the western & workwear retail "
         "industry. Would you be open to a short 20–30 minute call to share your "
-        "general perspective on the space?\n\nTo be clear, I'm only after your "
-        "high-level industry views — not any confidential or material non-public "
-        "information about any company. I'm happy to work around your schedule.\n\n"
+        "perspective on the space? Happy to work around your schedule.\n\n"
         "If you'd rather not, no problem at all — just let me know and I won't "
         "follow up.\n\nBest,\n{me}"),
     "Competitor context": (
         "Industry research — a quick perspective?",
         "Hi {first},\n\nI'm researching the western & workwear retail landscape and "
         "your experience at {company} stood out. Could I ask you for 20 minutes to "
-        "hear your general read on the category — trends, competition, what's "
-        "working?\n\nStrictly high-level industry perspective — nothing "
-        "confidential or non-public. And if now's not a good time, just say the "
-        "word and I won't follow up.\n\nThanks,\n{me}"),
+        "hear your read on the category — trends, competition, what's working?\n\n"
+        "If now's not a good time, just say the word and I won't follow up.\n\n"
+        "Thanks,\n{me}"),
 }
 
 
