@@ -32,6 +32,13 @@ def _flow(client_id, client_secret, redirect_uri, state=None):
     }}
     flow = Flow.from_client_config(cfg, scopes=SCOPES, state=state)
     flow.redirect_uri = redirect_uri
+    # Disable PKCE. authorization_url() and the token exchange run as separate
+    # Flow objects across a Streamlit redirect, so the auto-generated code_verifier
+    # doesn't survive -> "invalid_grant: Missing code verifier". We're a
+    # confidential web client (client_secret provides the security PKCE would),
+    # so no verifier is needed as long as neither request uses PKCE.
+    flow.autogenerate_code_verifier = False
+    flow.code_verifier = None
     return flow
 
 
