@@ -885,7 +885,6 @@ with tab_out:
                 if fresh != tok:
                     db.set_gmail_token(fresh)
                     st.session_state["gmail_token"] = fresh
-                acct = gmail_send.get_profile_email(creds)
             except Exception as e:
                 st.warning(f"Gmail session expired or invalid ({e}). Reconnect.")
                 creds = tok = None
@@ -898,7 +897,8 @@ with tab_out:
                        "You approve every email before it sends.")
         else:
             top = st.columns([3, 1])
-            top[0].success(f"Connected as {acct}")
+            top[0].success("Gmail connected (send-only). Emails send from the "
+                           "account you authorized.")
             if top[1].button("Disconnect"):
                 db.set_gmail_token("")
                 st.session_state.pop("gmail_token", None)
