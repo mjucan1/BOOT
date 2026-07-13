@@ -1,21 +1,27 @@
+# Pinned to a stable, battle-tested stack. Upper bounds matter: unpinned, the
+# cloud pulled pandas 3.0 / numpy 2.5 / pyarrow 25 on Python 3.14 and segfaulted
+# at boot. Deploy on Python 3.12 (Streamlit Cloud app settings) with these.
+
 # Core scraping + data
-curl_cffi>=0.7        # browser-impersonating HTTP client (defeats bot wall)
-beautifulsoup4>=4.12
-pandas>=2.2
-pgeocode>=0.5         # offline ZIP -> lat/long for the store map
+curl_cffi>=0.7,<0.8        # browser-impersonating HTTP client (defeats bot wall)
+beautifulsoup4>=4.12,<5
+pandas>=2.2,<2.3
+numpy>=1.26,<2.2
+pyarrow>=14,<18            # streamlit uses this for dataframes; keep off v25
+pgeocode>=0.5              # offline ZIP -> lat/long for the store map
 python-dateutil>=2.9
 
 # Storage (SQLite locally / Postgres in the cloud)
-SQLAlchemy>=2.0
-psycopg2-binary>=2.9  # Postgres driver (Supabase/Neon)
+SQLAlchemy>=2.0,<2.1
+psycopg2-binary>=2.9       # Postgres driver (Supabase/Neon)
 
 # Dashboard
-streamlit>=1.38
-plotly>=5.23
+streamlit>=1.38,<1.60
+plotly>=5.23,<6
 
 # Foot traffic (Dewey Data) -- installed on demand, see README.
 # deweydatapy @ git+https://github.com/Dewey-Data/deweydatapy
-requests
-google-auth
-google-auth-oauthlib
-google-api-python-client
+requests>=2.31,<3
+google-auth>=2.30,<3
+google-auth-oauthlib>=1.2,<2
+google-api-python-client>=2.140,<3
