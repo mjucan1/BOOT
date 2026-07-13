@@ -313,14 +313,28 @@ with tab_price:
                             "discount_pct", "availability", "url"]]
                 .sort_values("eff_price"), width='stretch', hide_index=True)
 
-        # Price changes over time (needs >=2 snapshots).
-        if prices["run_ts"].nunique() > 1:
+        # Price over time -- bucket by MONTH (not raw run_ts: each Wayback capture
+        # has its own timestamp with ~1 product, which caused the spiky noise).
+        # Group on the "YYYY-MM" string (robust across pandas versions) and require
+        # a min sample so each point is a real median, not one outlier product.
+        p = prices.copy()
+        p["eff_price"] = p["sale_price"].fillna(p["list_price"])
+        p["month"] = p["run_ts"].astype(str).str[:7]
+        g = (p[p["month"].str.match(r"\d{4}-\d{2}")].dropna(subset=["eff_price"])
+             .groupby("month").agg(median_price=("eff_price", "median"),
+                                   n=("product_id", "nunique")).reset_index())
+        g = g[g["n"] >= 5]
+        g["date"] = pd.to_datetime(g["month"] + "-01", errors="coerce")
+        g = g.dropna(subset=["date"]).sort_values("date")
+        if len(g) > 1:
             st.subheader("Median effective price over time")
-            p = prices.copy()
-            p["eff_price"] = p["sale_price"].fillna(p["list_price"])
-            trend = p.groupby("run_ts")["eff_price"].median().reset_index()
-            st.plotly_chart(px.line(trend, x="run_ts", y="eff_price", markers=True),
-                            width='stretch')
+            fig = px.line(g, x="date", y="median_price", markers=True,
+                          labels={"median_price": "Median price ($)", "date": ""},
+                          hover_data={"n": True, "date": False})
+            st.plotly_chart(fig, width='stretch')
+            st.caption("Monthly median across all captured products (months with <5 "
+                       "omitted). Robust to the sparse, outlier-prone Wayback history "
+                       "that made the raw per-capture line spike.")
 
         st.subheader("Product table")
         st.dataframe(cur[["name", "brand", "category", "list_price",
