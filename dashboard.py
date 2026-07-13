@@ -789,6 +789,45 @@ with tab_out:
         st.success(f"Saved {len(rows)} contacts.")
         st.rerun()
 
+    # ---- Auto-find missing emails (Hunter.io, free tier ~25/month) ----
+    from bbxray import email_finder
+    hkey = _secret("HUNTER_API_KEY") or email_finder.api_key()
+    missing = (contacts[(contacts["email"].isna() | (contacts["email"] == ""))
+                        & contacts["name"].notna() & contacts["company"].notna()]
+               if not contacts.empty else pd.DataFrame())
+    if not hkey:
+        st.caption("🔍 **Auto-find emails:** create a free hunter.io account, then "
+                   "add `HUNTER_API_KEY` to your `.env` (and Streamlit secrets) to "
+                   "enable one-click email lookup for saved contacts. Free tier is "
+                   "~25 lookups/month.")
+    elif missing.empty:
+        st.caption("🔍 All saved contacts with a name + company have emails.")
+    else:
+        n = len(missing)
+        if st.button(f"🔍 Find emails for {n} contact{'s' if n > 1 else ''} "
+                     f"missing one (uses {n} of your free Hunter lookups)"):
+            allrows = contacts.where(pd.notna(contacts), None).to_dict("records")
+            found, misses = 0, []
+            with st.spinner("Looking up emails…"):
+                for r in allrows:
+                    if r.get("email") or not (r.get("name") and r.get("company")):
+                        continue
+                    res = email_finder.find_email(r["name"], r["company"], hkey)
+                    if res["email"]:
+                        r["email"] = res["email"]
+                        conf = f"email confidence {res['score']}%"
+                        r["notes"] = f"{r['notes']} | {conf}" if r.get("notes") else conf
+                        found += 1
+                    else:
+                        misses.append(f"{r['name']}: {res['error'] or 'not found'}")
+            keep = [{k: r.get(k) for k in cols + ["added_ts"]} for r in allrows]
+            db.replace_contacts(keep)
+            load.clear()
+            st.success(f"Found {found} of {n} emails (confidence saved in notes).")
+            if misses:
+                st.caption("No luck: " + "; ".join(misses[:5]))
+            st.rerun()
+
     st.divider()
     st.markdown("### 3 · Compose outreach (you review & send)")
     if contacts.empty:

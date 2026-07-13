@@ -15,3 +15,4 @@ plotly>=5.23
 
 # Foot traffic (Dewey Data) -- installed on demand, see README.
 # deweydatapy @ git+https://github.com/Dewey-Data/deweydatapy
+requests
