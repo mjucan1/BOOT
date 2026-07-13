@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import (Column, Float, Integer, MetaData, Table, Text,
-                        create_engine, delete, func, insert, select, text)
+                        create_engine, delete, func, insert, select, text,
+                        update)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: E402
@@ -137,6 +138,20 @@ gmail_token = Table(
     Column("updated_ts", Text),
 )
 
+scheduled_emails = Table(
+    "scheduled_emails", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("to_email", Text),
+    Column("contact_name", Text),
+    Column("subject", Text),
+    Column("body", Text),
+    Column("send_at", Text),     # naive-local ISO; the runner (on the same PC) compares
+    Column("status", Text),      # scheduled / sent / failed / canceled
+    Column("created_ts", Text),
+    Column("sent_ts", Text),
+    Column("error", Text),
+)
+
 _engine = None
 
 
@@ -216,6 +231,33 @@ def set_gmail_token(token_json: str) -> None:
 def get_gmail_token() -> str | None:
     with get_engine().connect() as conn:
         return conn.execute(select(gmail_token.c.token_json)).scalar()
+
+
+def insert_scheduled(rows: list[dict]) -> None:
+    _insert(scheduled_emails, rows)
+
+
+def due_scheduled(now_iso: str) -> list[dict]:
+    """Emails whose send_at has passed and are still pending."""
+    with get_engine().connect() as conn:
+        rows = conn.execute(select(scheduled_emails).where(
+            scheduled_emails.c.status == "scheduled",
+            scheduled_emails.c.send_at <= now_iso)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def list_scheduled(status: str = "scheduled") -> list[dict]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(scheduled_emails).where(scheduled_emails.c.status == status)
+            .order_by(scheduled_emails.c.send_at)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def update_scheduled(sched_id: int, **fields) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(update(scheduled_emails)
+                     .where(scheduled_emails.c.id == sched_id).values(**fields))
 
 
 def max_foot_traffic_date() -> str | None:

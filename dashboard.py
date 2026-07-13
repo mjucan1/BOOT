@@ -933,34 +933,76 @@ with tab_out:
                 appr = [q for q in queue if q["approved"]]
                 if picks:
                     st.markdown(f"**{len(appr)} of {len(queue)} approved.**")
-                if appr and st.button(f"🚀 Send {len(appr)} approved email(s)"):
-                    ok, errs = 0, []
-                    prog = st.progress(0.0)
-                    for i, q in enumerate(appr, 1):
-                        try:
-                            gmail_send.send_email(creds, acct, q["to"],
-                                                  q["subject"], q["body"])
-                            ok += 1
-                        except Exception as e:
-                            errs.append(f"{q['name']}: {e}")
-                        prog.progress(i / len(appr))
-                    if ok:
-                        allc = contacts.where(pd.notna(contacts), None).to_dict("records")
-                        done = {q["name"] for q in appr}
-                        for c in allc:
-                            if c.get("name") in done:
-                                c["status"] = "sent"
-                        db.replace_contacts(
-                            [{k: c.get(k) for k in cols + ["added_ts"]} for c in allc])
-                        load.clear()
-                    st.success(f"Sent {ok} email(s); contacts marked 'sent'.")
-                    if errs:
-                        st.error("Errors: " + "; ".join(errs[:5]))
-                    if ok:
+                mode = st.radio("Delivery", ["Send now", "Schedule for later"],
+                                horizontal=True, key="send_mode")
+
+                if mode == "Send now":
+                    if appr and st.button(f"🚀 Send {len(appr)} approved email(s)"):
+                        ok, errs = 0, []
+                        prog = st.progress(0.0)
+                        for i, q in enumerate(appr, 1):
+                            try:
+                                gmail_send.send_email(creds, None, q["to"],
+                                                      q["subject"], q["body"])
+                                ok += 1
+                            except Exception as e:
+                                errs.append(f"{q['name']}: {e}")
+                            prog.progress(i / len(appr))
+                        if ok:
+                            allc = contacts.where(pd.notna(contacts), None).to_dict("records")
+                            done = {q["name"] for q in appr}
+                            for c in allc:
+                                if c.get("name") in done:
+                                    c["status"] = "sent"
+                            db.replace_contacts(
+                                [{k: c.get(k) for k in cols + ["added_ts"]} for c in allc])
+                            load.clear()
+                        st.success(f"Sent {ok} email(s); contacts marked 'sent'.")
+                        if errs:
+                            st.error("Errors: " + "; ".join(errs[:5]))
+                        if ok:
+                            st.rerun()
+                else:
+                    cA, cB = st.columns(2)
+                    sd = cA.date_input("Send date", key="sch_date")
+                    sti = cB.time_input("Send time (your local timezone)",
+                                        key="sch_time")
+                    when = _dt.datetime.combine(sd, sti)
+                    past = when < _dt.datetime.now()
+                    if past:
+                        st.warning("That time is in the past — pick a future time.")
+                    if appr and not past and st.button(
+                            f"📅 Schedule {len(appr)} for {when:%b %d, %I:%M %p}"):
+                        now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                        db.insert_scheduled([
+                            {"to_email": q["to"], "contact_name": q["name"],
+                             "subject": q["subject"], "body": q["body"],
+                             "send_at": when.isoformat(), "status": "scheduled",
+                             "created_ts": now_iso, "sent_ts": None, "error": None}
+                            for q in appr])
+                        st.success(f"Scheduled {len(appr)} email(s) for "
+                                   f"{when:%b %d, %I:%M %p}. The sender task delivers "
+                                   "them within ~20 min of that time (your PC must be "
+                                   "on and the send_scheduled task running).")
                         st.rerun()
+
                 st.caption("Gmail caps sending (~500/day personal). Keep batches "
                            "small and personalized — this is channel-check outreach, "
                            "not a blast.")
+
+                # ---- Scheduled queue: review / cancel before they fire ----
+                pend = db.list_scheduled("scheduled")
+                if pend:
+                    with st.expander(f"📋 Scheduled queue ({len(pend)} pending)"):
+                        for e in pend:
+                            r1, r2 = st.columns([5, 1])
+                            r1.markdown(
+                                f"**{e['send_at'][:16].replace('T', ' ')}** — "
+                                f"{e['contact_name']} `<{e['to_email']}>`  ·  "
+                                f"{e['subject']}")
+                            if r2.button("Cancel", key=f"cx_{e['id']}"):
+                                db.update_scheduled(e["id"], status="canceled")
+                                st.rerun()
 
 with st.sidebar:
     st.header("Run log")
