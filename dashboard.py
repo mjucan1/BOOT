@@ -197,18 +197,35 @@ with tab_price:
             d = latest_sub["discount_pct"][latest_sub["discount_pct"] > 0]
             k3.metric("Avg discount", f"{d.mean():.0f}%" if len(d) else "—")
 
+            def _trim_mean(s, frac=0.2):
+                s = s.dropna().sort_values()
+                # drop at least one from each tail once we have >=5 points, so a
+                # lone premium/misparsed item can't drag the average.
+                k = max(1, int(len(s) * frac)) if len(s) >= 5 else 0
+                return s.iloc[k:len(s) - k].mean() if len(s) > 2 * k else s.mean()
+
             trend = (sub.groupby("run_ts")
                      .agg(median_price=("eff_price", "median"),
-                          avg_price=("eff_price", "mean"),
+                          trimmed_avg=("eff_price", _trim_mean),
                           products=("product_id", "nunique")).reset_index())
+            # Thin periods (esp. sparse Wayback months) let a single mislabeled or
+            # premium item spike the line -- the "$800 jeans" bug. Require a min
+            # sample and use median + a 10%-trimmed mean, both outlier-resistant.
+            min_n = st.slider("Min products per trend point", 1, 20, 5,
+                              key=f"minn_{sel}")
+            trend = trend[trend["products"] >= min_n]
             trend["date"] = pd.to_datetime(trend["run_ts"], errors="coerce", utc=True)
             if len(trend) > 1:
-                st.markdown(f"**{sel} — median & average price over time**")
+                st.markdown(f"**{sel} — median & trimmed-avg price over time** "
+                            f"(periods with ≥{min_n} products)")
                 melt = trend.melt(id_vars="date",
-                                  value_vars=["median_price", "avg_price"],
+                                  value_vars=["median_price", "trimmed_avg"],
                                   var_name="metric", value_name="price")
                 st.plotly_chart(px.line(melt, x="date", y="price", color="metric",
                                         markers=True), width='stretch')
+            elif len(trend) == 1:
+                st.caption(f"Only one period has ≥{min_n} products so far — the "
+                           "trend builds as weekly data accrues.")
 
                 st.markdown(f"**Biggest price moves in {sel}** (first → latest snapshot)")
                 piv = sub.pivot_table(index=["product_id", "name"], columns="run_ts",

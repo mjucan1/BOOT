@@ -84,16 +84,16 @@ def get_product_urls(sess: PoliteSession, sitemaps: list[str],
 _CATEGORY_RULES = [
     ("Work Boots", r"work boot|composite toe|steel toe|safety toe|waterproof work"),
     ("Western Boots", r"western boot|cowboy boot|cowgirl|roper|square toe|snip toe"),
-    ("Boots", r"\bboot(s)?\b"),
+    ("Boots", r"\bboot(s)?\b(?!\s*cut)"),   # not "boot cut [jeans]"
+    ("Outerwear", r"jacket|vest|\bcoat\b|sportscoat|blazer|hoodie|pullover|outerwear"),
+    ("Shirts", r"\bshirt|\btee\b|\bt-shirt|flannel|henley|polo|crop top|tank top"),
+    ("Pants & Shorts", r"\bshort(s)?\b|trouser|chino|legging|\bpant(s)?\b"),
     ("Jeans", r"\bjean(s)?\b|denim"),
-    ("Shirts", r"\bshirt|\btee\b|\bt-shirt|flannel|henley|polo"),
-    ("Outerwear", r"jacket|vest|coat|hoodie|pullover|outerwear"),
     ("Hats", r"\bhat(s)?\b|\bcap\b|beanie"),
     ("Belts & Buckles", r"belt|buckle"),
     ("Boot Care", r"boot care|conditioner|polish|cleaner"),
     ("Accessories", r"wallet|sock|glove|scarf|bandana|jewelry|sunglass|bag|backpack"),
     ("Footwear", r"shoe|sneaker|sandal|moccasin|slipper|clog"),
-    ("Pants & Shorts", r"pant|short|trouser|chino|legging"),
 ]
 
 
