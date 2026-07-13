@@ -1004,6 +1004,35 @@ with tab_out:
                                 db.update_scheduled(e["id"], status="canceled")
                                 st.rerun()
 
+                # ---- Missed: PC was off past the grace window; you decide ----
+                miss = db.list_scheduled("missed")
+                if miss:
+                    with st.expander(f"⚠️ Missed — PC was off ({len(miss)})",
+                                     expanded=True):
+                        st.caption("These passed their send time while your PC was "
+                                   "off, so they were held — **not** auto-sent. Send "
+                                   "now or cancel, on your terms.")
+                        for e in miss:
+                            m1, m2, m3 = st.columns([4, 1, 1])
+                            m1.markdown(
+                                f"was **{e['send_at'][:16].replace('T', ' ')}** — "
+                                f"{e['contact_name']} · {e['subject']}")
+                            if m2.button("Send now", key=f"ms_{e['id']}"):
+                                try:
+                                    gmail_send.send_email(creds, None, e["to_email"],
+                                                          e["subject"], e["body"])
+                                    db.update_scheduled(
+                                        e["id"], status="sent", error=None,
+                                        sent_ts=_dt.datetime.now(
+                                            _dt.timezone.utc).isoformat())
+                                    st.success(f"Sent to {e['to_email']}.")
+                                except Exception as ex:
+                                    st.error(f"Send failed: {ex}")
+                                st.rerun()
+                            if m3.button("Cancel", key=f"mc_{e['id']}"):
+                                db.update_scheduled(e["id"], status="canceled")
+                                st.rerun()
+
 with st.sidebar:
     st.header("Run log")
     if not runs.empty:
