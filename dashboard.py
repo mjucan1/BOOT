@@ -15,7 +15,30 @@ import urllib.parse
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as _go
+import plotly.io as _pio
 import streamlit as st
+
+# --- House style: one cohesive look across every chart ----------------------
+ACCENT = "#D4A24E"   # muted amber/gold — western + premium, used sparingly
+PALETTE = ["#5B8FF9", "#D4A24E", "#5AD8A6", "#E8684A", "#9270CA",
+           "#69B7CE", "#F6BD16", "#8C8C99"]
+_pio.templates["xray"] = _go.layout.Template(layout=_go.Layout(
+    font=dict(family="Inter, -apple-system, Segoe UI, sans-serif", size=13,
+              color="#C4CBD8"),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    colorway=PALETTE,
+    margin=dict(l=8, r=8, t=44, b=8),
+    hoverlabel=dict(font_size=12, font_family="Inter", bgcolor="#1A1F2B"),
+    xaxis=dict(gridcolor="rgba(255,255,255,0.05)", zeroline=False, showline=False,
+               ticks="outside", tickcolor="rgba(255,255,255,0.1)"),
+    yaxis=dict(gridcolor="rgba(255,255,255,0.05)", zeroline=False),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                title_text="", font=dict(size=12)),
+    title=dict(font=dict(size=15, color="#E6E9EF"), x=0, xanchor="left"),
+))
+px.defaults.template = "xray"
+px.defaults.color_discrete_sequence = PALETTE
 
 
 def _secret(key: str):
@@ -36,6 +59,36 @@ import config  # noqa: E402
 from bbxray import db  # noqa: E402
 
 st.set_page_config(page_title="Boot Barn X-Ray", layout="wide", page_icon="🥾")
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html, body, [class*="css"], .stApp { font-family:'Inter',-apple-system,'Segoe UI',sans-serif; }
+.block-container { padding-top:2.1rem; padding-bottom:3rem; max-width:1440px; }
+.xray-header { border-bottom:1px solid rgba(255,255,255,0.09); padding-bottom:0.8rem;
+  margin-bottom:1.2rem; display:flex; align-items:baseline; justify-content:space-between;
+  flex-wrap:wrap; gap:0.4rem; }
+.xray-title { font-size:1.7rem; font-weight:700; letter-spacing:0.02em; color:#F0F2F6; }
+.xray-title span { color:#D4A24E; }
+.xray-sub { font-size:0.82rem; color:#8A93A6; letter-spacing:0.02em; margin-top:0.15rem; }
+.xray-asof { font-size:0.78rem; color:#6D7688; white-space:nowrap; }
+[data-testid="stMetric"] { background:#161A22; border:1px solid rgba(255,255,255,0.06);
+  border-radius:10px; padding:14px 16px 12px; }
+[data-testid="stMetric"] > div { gap:0.1rem; }
+[data-testid="stMetricValue"] { font-size:1.5rem; font-weight:600; color:#F0F2F6; }
+[data-testid="stMetricLabel"] p { color:#8A93A6; font-weight:500; text-transform:uppercase;
+  font-size:0.7rem; letter-spacing:0.05em; }
+[data-testid="stMarkdownContainer"] h3 { padding-left:0.6rem; border-left:3px solid #D4A24E;
+  font-weight:600; margin-top:0.4rem; }
+.stTabs [data-baseweb="tab-list"] { gap:0.25rem; border-bottom:1px solid rgba(255,255,255,0.08); }
+.stTabs [data-baseweb="tab"] { font-weight:500; padding:0.4rem 0.85rem; }
+.stTabs [aria-selected="true"] { color:#D4A24E !important; }
+[data-testid="stDataFrame"], [data-testid="stExpander"] {
+  border:1px solid rgba(255,255,255,0.07); border-radius:8px; }
+.stButton > button { border-radius:7px; font-weight:500; }
+hr { border-color:rgba(255,255,255,0.07); }
+</style>
+""", unsafe_allow_html=True)
 
 
 def check_password() -> bool:
@@ -112,13 +165,22 @@ def load_open_dates() -> pd.DataFrame:
         return pd.DataFrame(columns=["store_id", "opened_year"])
 
 
-st.title("🥾 Boot Barn X-Ray")
-st.caption("Competitive intelligence: pricing · store footprint · foot traffic")
+st.markdown(
+    f"""<div class="xray-header">
+      <div>
+        <div class="xray-title">BOOT BARN <span>X-RAY</span></div>
+        <div class="xray-sub">Competitive Intelligence &nbsp;·&nbsp; Pricing &nbsp;·&nbsp;
+          Store Footprint &nbsp;·&nbsp; Foot Traffic &nbsp;·&nbsp; Channel Checks</div>
+      </div>
+      <div class="xray-asof">NYSE: BOOT &nbsp;|&nbsp; as of {_dt.date.today():%b %d, %Y}</div>
+    </div>""",
+    unsafe_allow_html=True)
 
 prices = load("price_snapshots")
 stores = load("store_snapshots")
 foot = load("foot_traffic")
 brands = load("brand_prices")
+competitors = load("competitor_prices")
 contacts = load("contacts")
 runs = load("runs")
 
@@ -126,10 +188,10 @@ if prices.empty and stores.empty:
     st.warning("No data yet. Run the scrapers first:  `python run.py all`")
     st.stop()
 
-(tab_price, tab_store, tab_foot, tab_cann, tab_brand,
+(tab_price, tab_store, tab_foot, tab_cann, tab_brand, tab_comp,
  tab_out) = st.tabs(
     ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization",
-     "🏷️ Private Labels", "📇 Outreach"])
+     "🏷️ Private Labels", "🏁 Competitors", "📇 Outreach"])
 
 # ---------------------------------------------------------------- Pricing ----
 with tab_price:
@@ -682,6 +744,79 @@ with tab_brand:
         st.dataframe(d[["brand", "title", "product_type", "price",
                         "compare_at_price", "on_sale", "available", "url"]]
                      .sort_values("price"), width='stretch', hide_index=True)
+
+# -------------------------------------------------------------- Competitors --
+with tab_comp:
+    st.subheader("🏁 Competitive price positioning")
+    st.caption("Boot Barn's catalog vs. seven western/workwear DTC competitors "
+               "(Shopify). Category-level views are the fairest read; the overall "
+               "median reflects each retailer's category mix.")
+    if competitors.empty:
+        st.info("No competitor data yet. Run "
+                "`python -m bbxray.scrape_shopify competitors`.")
+    else:
+        comp_latest = latest_snapshot(competitors)
+        parts = []
+        if not prices.empty:
+            bb = latest_snapshot(prices[prices["source"] != "wayback"]).copy()
+            bb["price"] = bb["sale_price"].fillna(bb["list_price"])
+            bb["on_sale"] = bb["sale_price"].notna().astype(int)
+            parts.append(bb[["category", "price", "on_sale"]].assign(
+                retailer="Boot Barn"))
+        cc = comp_latest.rename(columns={"competitor": "retailer"})
+        parts.append(cc[["retailer", "category", "price", "on_sale"]])
+        mkt = pd.concat(parts, ignore_index=True).dropna(subset=["price"])
+        mkt = mkt[mkt["price"] > 0]
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Retailers", mkt["retailer"].nunique())
+        k2.metric("Products compared", f"{len(mkt):,}")
+        bbmed = mkt.loc[mkt["retailer"] == "Boot Barn", "price"].median()
+        cmed = mkt.loc[mkt["retailer"] != "Boot Barn", "price"].median()
+        k3.metric("Boot Barn median", f"${bbmed:,.0f}" if pd.notna(bbmed) else "—")
+        k4.metric("Competitor-set median", f"${cmed:,.0f}",
+                  delta=(f"{(bbmed - cmed) / cmed * 100:+.0f}% vs peers"
+                         if pd.notna(bbmed) else None), delta_color="off")
+
+        st.markdown("### Price positioning — median price by retailer")
+        pos = (mkt.groupby("retailer")["price"].median().reset_index()
+               .sort_values("price"))
+        pos["Boot Barn?"] = pos["retailer"].eq("Boot Barn").map(
+            {True: "Boot Barn", False: "Competitor"})
+        fig = px.bar(pos, x="price", y="retailer", orientation="h",
+                     color="Boot Barn?",
+                     color_discrete_map={"Boot Barn": ACCENT, "Competitor": "#5B8FF9"},
+                     labels={"price": "Median price ($)", "retailer": ""})
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, width='stretch')
+
+        st.markdown("### Price by category & retailer")
+        topcats = mkt["category"].value_counts().head(8).index.tolist()
+        hm = (mkt[mkt["category"].isin(topcats)]
+              .groupby(["retailer", "category"])["price"].median().reset_index())
+        piv = hm.pivot(index="retailer", columns="category", values="price")
+        st.plotly_chart(
+            px.imshow(piv, text_auto=".0f", aspect="auto",
+                      color_continuous_scale="Cividis",
+                      labels=dict(color="Median $", x="", y="")), width='stretch')
+
+        cL, cR = st.columns(2)
+        cL.markdown("### Promotional intensity")
+        promo = ((mkt.groupby("retailer")["on_sale"].mean() * 100).reset_index()
+                 .sort_values("on_sale", ascending=False))
+        cL.plotly_chart(px.bar(promo, x="retailer", y="on_sale",
+                        labels={"on_sale": "% of catalog on sale", "retailer": ""}),
+                        width='stretch')
+        cR.markdown("### Category deep-dive")
+        cat = cR.selectbox("Category", topcats, key="comp_cat")
+        byr = (mkt[mkt["category"] == cat].groupby("retailer")["price"].median()
+               .reset_index().sort_values("price"))
+        cR.plotly_chart(px.bar(byr, x="retailer", y="price",
+                        labels={"price": f"Median {cat} ($)", "retailer": ""}),
+                        width='stretch')
+
+        st.caption("Sample sizes vary by retailer (200–600 products each); medians "
+                   "are robust but treat small per-category cells as directional.")
 
 # ----------------------------------------------------------------- Outreach --
 OUT_COMPANIES = ["Boot Barn", "Ariat", "Cavender's", "Tecovas", "Sheplers",

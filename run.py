@@ -27,10 +27,13 @@ def main(argv: list[str]) -> int:
         scrape_stores.run()
     elif cmd == "brands":
         scrape_shopify.run()
+    elif cmd == "competitors":
+        scrape_shopify.run_competitors()
     elif cmd == "all":
         scrape_prices.run()
         scrape_stores.run()
         scrape_shopify.run()
+        scrape_shopify.run_competitors()
     else:
         print(__doc__)
         return 1

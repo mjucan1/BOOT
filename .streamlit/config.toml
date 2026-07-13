@@ -1,0 +1,9 @@
+# App theme. Dark, professional, amber accent — the CSS in dashboard.py layers
+# the finer styling (Inter font, KPI cards) on top of this base.
+[theme]
+base = "dark"
+primaryColor = "#D4A24E"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#161A22"
+textColor = "#E6E9EF"
+font = "sans serif"

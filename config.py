@@ -62,6 +62,18 @@ BRAND_SITES = {
     "Moonshine Spirit": "moonshinespirit.com",
 }
 
+# Competitor DTC sites on Shopify (clean /products.json). Spans price tiers:
+# value (Durango) -> mid (Tecovas/Dan Post/Twisted X) -> premium (Lucchese/Lane).
+COMPETITOR_SITES = {
+    "Tecovas": "tecovas.com",
+    "Lucchese": "lucchese.com",
+    "Durango": "durangoboots.com",
+    "Dan Post": "danpostboots.com",
+    "Twisted X": "twistedx.com",
+    "Lane Boots": "laneboots.com",
+    "Kimes Ranch": "kimesranch.com",
+}
+
 # --- Foot traffic (Dewey) ----------------------------------------------------
 DEWEY_API_KEY = os.environ.get("DEWEY_API_KEY", "")
 # Product path for the dataset you licensed on Dewey (e.g. Advan Monthly Patterns).

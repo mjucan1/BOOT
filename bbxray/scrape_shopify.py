@@ -44,8 +44,8 @@ def _fnum(v) -> float | None:
         return None
 
 
-def fetch_products(site: str) -> list[dict]:
-    """All products for a Shopify site, paging until an empty page."""
+def fetch_products(site: str, max_products: int | None = None) -> list[dict]:
+    """All products for a Shopify site, paging until empty (or max_products)."""
     out: list[dict] = []
     page = 1
     while page <= 60:  # 60 * 250 = 15k product safety ceiling
@@ -54,6 +54,8 @@ def fetch_products(site: str) -> list[dict]:
         if not prods:
             break
         out.extend(prods)
+        if max_products and len(out) >= max_products:
+            return out[:max_products]
         page += 1
         time.sleep(config.REQUEST_DELAY_SEC * 0.3)
     return out
@@ -101,5 +103,46 @@ def run() -> int:
     return total
 
 
+def _competitor_row(p: dict, competitor: str, site: str, run_ts: str) -> dict:
+    from bbxray.scrape_prices import classify_category
+    base = product_row(p, competitor, site, run_ts)
+    return {
+        "run_ts": run_ts, "competitor": competitor,
+        "brand": p.get("vendor") or competitor, "site": site,
+        "product_id": base["product_id"], "title": base["title"],
+        "product_type": base["product_type"],
+        "category": classify_category(base["title"], base["url"]),
+        "price": base["price"], "compare_at_price": base["compare_at_price"],
+        "on_sale": base["on_sale"], "available": base["available"],
+        "url": base["url"],
+    }
+
+
+def run_competitors(max_per_site: int = 600) -> int:
+    """Snapshot competitor DTC catalogs (config.COMPETITOR_SITES) for comparison."""
+    run_ts = dt.datetime.now(dt.timezone.utc).isoformat()
+    db.init_db()
+    total = 0
+    for comp, site in config.COMPETITOR_SITES.items():
+        log(f"[competitors] {comp} ({site}) ...")
+        try:
+            prods = fetch_products(site, max_products=max_per_site)
+        except Exception as e:  # noqa: BLE001
+            log(f"  ! failed to fetch {site}: {e}")
+            continue
+        rows = [_competitor_row(p, comp, site, run_ts) for p in prods]
+        db.insert_competitor_prices(rows)
+        total += len(rows)
+        log(f"  + {len(rows)} products")
+    db.record_run("competitors", run_ts, total,
+                  notes=f"{len(config.COMPETITOR_SITES)} competitor Shopify sites")
+    log(f"[competitors] done: {total} products across "
+        f"{len(config.COMPETITOR_SITES)} sites.")
+    return total
+
+
 if __name__ == "__main__":
-    run()
+    if len(sys.argv) >= 2 and sys.argv[1] == "competitors":
+        run_competitors()
+    else:
+        run()

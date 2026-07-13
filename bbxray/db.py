@@ -138,6 +138,24 @@ gmail_token = Table(
     Column("updated_ts", Text),
 )
 
+competitor_prices = Table(
+    "competitor_prices", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_ts", Text, index=True),
+    Column("competitor", Text, index=True),
+    Column("brand", Text),
+    Column("site", Text),
+    Column("product_id", Text),
+    Column("title", Text),
+    Column("product_type", Text),
+    Column("category", Text),
+    Column("price", Float),
+    Column("compare_at_price", Float),
+    Column("on_sale", Integer),
+    Column("available", Integer),
+    Column("url", Text),
+)
+
 scheduled_emails = Table(
     "scheduled_emails", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -207,6 +225,10 @@ def insert_foot_traffic(rows: list[dict]) -> None:
 
 def insert_brand_prices(rows: list[dict]) -> None:
     _insert(brand_prices, rows)
+
+
+def insert_competitor_prices(rows: list[dict]) -> None:
+    _insert(competitor_prices, rows)
 
 
 def replace_contacts(rows: list[dict]) -> None:
