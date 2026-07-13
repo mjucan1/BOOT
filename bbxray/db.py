@@ -130,6 +130,13 @@ contacts = Table(
     Column("added_ts", Text),
 )
 
+gmail_token = Table(
+    "gmail_token", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("token_json", Text),
+    Column("updated_ts", Text),
+)
+
 _engine = None
 
 
@@ -193,6 +200,22 @@ def replace_contacts(rows: list[dict]) -> None:
         conn.execute(delete(contacts))
         if rows:
             conn.execute(insert(contacts), rows)
+
+
+def set_gmail_token(token_json: str) -> None:
+    """Persist (or clear) the single Gmail OAuth token in Supabase."""
+    import datetime as _d
+    with get_engine().begin() as conn:
+        conn.execute(delete(gmail_token))
+        if token_json:
+            conn.execute(insert(gmail_token), [{
+                "id": 1, "token_json": token_json,
+                "updated_ts": _d.datetime.now(_d.timezone.utc).isoformat()}])
+
+
+def get_gmail_token() -> str | None:
+    with get_engine().connect() as conn:
+        return conn.execute(select(gmail_token.c.token_json)).scalar()
 
 
 def max_foot_traffic_date() -> str | None:

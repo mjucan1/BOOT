@@ -851,6 +851,117 @@ with tab_out:
             st.caption(f"Opens a pre-filled Gmail compose to {to}. Nothing sends "
                        "until you click Send in Gmail.")
 
+    # ---- 4 · OAuth send: connect Gmail, approve a queue, bulk-send ----
+    st.divider()
+    st.markdown("### 4 · Send from the dashboard (Gmail OAuth)")
+    g_cid, g_sec = _secret("GMAIL_CLIENT_ID"), _secret("GMAIL_CLIENT_SECRET")
+    g_redir = _secret("GMAIL_REDIRECT_URI")
+    if not (g_cid and g_sec and g_redir):
+        st.info("**Not set up yet.** To send from inside the dashboard, create a "
+                "Google Cloud OAuth client (send-only Gmail scope) and add "
+                "`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, and `GMAIL_REDIRECT_URI` "
+                "to your secrets. Until then, use the **Open in Gmail** links above. "
+                "(Ask me for the 15-min setup walkthrough.)")
+    else:
+        from bbxray import gmail_send
+        qp = st.query_params
+        if "code" in qp and not st.session_state.get("gmail_token"):
+            try:
+                tok = gmail_send.exchange_code(
+                    g_cid, g_sec, g_redir, qp["code"],
+                    st.session_state.get("oauth_state"))
+                db.set_gmail_token(tok)
+                st.session_state["gmail_token"] = tok
+                st.query_params.clear()
+                st.success("Gmail connected.")
+            except Exception as e:
+                st.error(f"OAuth exchange failed: {e}")
+
+        tok = st.session_state.get("gmail_token") or db.get_gmail_token()
+        creds = acct = None
+        if tok:
+            try:
+                creds, fresh = gmail_send.load_creds(tok)
+                if fresh != tok:
+                    db.set_gmail_token(fresh)
+                    st.session_state["gmail_token"] = fresh
+                acct = gmail_send.get_profile_email(creds)
+            except Exception as e:
+                st.warning(f"Gmail session expired or invalid ({e}). Reconnect.")
+                creds = tok = None
+
+        if not creds:
+            url, state = gmail_send.auth_url(g_cid, g_sec, g_redir)
+            st.session_state["oauth_state"] = state
+            st.link_button("🔗 Connect Gmail (send-only)", url)
+            st.caption("Grants send-only access; the app cannot read your inbox. "
+                       "You approve every email before it sends.")
+        else:
+            top = st.columns([3, 1])
+            top[0].success(f"Connected as {acct}")
+            if top[1].button("Disconnect"):
+                db.set_gmail_token("")
+                st.session_state.pop("gmail_token", None)
+                st.rerun()
+
+            sendable = (contacts[contacts["email"].notna() &
+                                 (contacts["email"] != "")]
+                        if not contacts.empty else pd.DataFrame())
+            if sendable.empty:
+                st.info("No contacts with emails yet — add/find some above.")
+            else:
+                st.markdown("**Build a queue → approve each → send the approved.**")
+                picks = st.multiselect("Contacts to email",
+                                       sendable["name"].dropna().tolist())
+                bt = st.selectbox("Template", list(OUT_TEMPLATES), key="bulk_tmpl")
+                bme = st.text_input("Your name (signature)", key="bulk_me")
+                bsub_t, bbody_t = OUT_TEMPLATES[bt]
+                queue = []
+                for nm in picks:
+                    r = sendable[sendable["name"] == nm].iloc[0]
+                    ctx = {"first": str(nm).split()[0],
+                           "company": r.get("company") or "your company",
+                           "me": bme or "[your name]"}
+                    with st.expander(f"✉️  {nm}  <{r['email']}>"):
+                        su = st.text_input("Subject", bsub_t.format(**ctx),
+                                           key=f"su_{nm}")
+                        bo = st.text_area("Body", bbody_t.format(**ctx),
+                                          key=f"bo_{nm}", height=200)
+                        ap = st.checkbox("✅ Approve this email", key=f"ap_{nm}")
+                    queue.append({"name": nm, "to": r["email"], "subject": su,
+                                  "body": bo, "approved": ap})
+                appr = [q for q in queue if q["approved"]]
+                if picks:
+                    st.markdown(f"**{len(appr)} of {len(queue)} approved.**")
+                if appr and st.button(f"🚀 Send {len(appr)} approved email(s)"):
+                    ok, errs = 0, []
+                    prog = st.progress(0.0)
+                    for i, q in enumerate(appr, 1):
+                        try:
+                            gmail_send.send_email(creds, acct, q["to"],
+                                                  q["subject"], q["body"])
+                            ok += 1
+                        except Exception as e:
+                            errs.append(f"{q['name']}: {e}")
+                        prog.progress(i / len(appr))
+                    if ok:
+                        allc = contacts.where(pd.notna(contacts), None).to_dict("records")
+                        done = {q["name"] for q in appr}
+                        for c in allc:
+                            if c.get("name") in done:
+                                c["status"] = "sent"
+                        db.replace_contacts(
+                            [{k: c.get(k) for k in cols + ["added_ts"]} for c in allc])
+                        load.clear()
+                    st.success(f"Sent {ok} email(s); contacts marked 'sent'.")
+                    if errs:
+                        st.error("Errors: " + "; ".join(errs[:5]))
+                    if ok:
+                        st.rerun()
+                st.caption("Gmail caps sending (~500/day personal). Keep batches "
+                           "small and personalized — this is channel-check outreach, "
+                           "not a blast.")
+
 with st.sidebar:
     st.header("Run log")
     if not runs.empty:
