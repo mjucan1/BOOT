@@ -116,6 +116,20 @@ brand_prices = Table(
     Column("published_at", Text),
 )
 
+contacts = Table(
+    "contacts", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", Text),
+    Column("title", Text),
+    Column("company", Text),
+    Column("relationship", Text),   # former_boot / competitor / current_boot / other
+    Column("linkedin_url", Text),
+    Column("email", Text),
+    Column("status", Text),         # to_contact / drafted / sent / replied / passed
+    Column("notes", Text),
+    Column("added_ts", Text),
+)
+
 _engine = None
 
 
@@ -171,6 +185,14 @@ def insert_foot_traffic(rows: list[dict]) -> None:
 
 def insert_brand_prices(rows: list[dict]) -> None:
     _insert(brand_prices, rows)
+
+
+def replace_contacts(rows: list[dict]) -> None:
+    """Overwrite the contacts table with the edited set (single-user CRM)."""
+    with get_engine().begin() as conn:
+        conn.execute(delete(contacts))
+        if rows:
+            conn.execute(insert(contacts), rows)
 
 
 def max_foot_traffic_date() -> str | None:

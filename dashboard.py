@@ -9,7 +9,9 @@ Reads the SQLite DB populated by the scrapers and visualizes:
 from __future__ import annotations
 
 import calendar
+import datetime as _dt
 import os
+import urllib.parse
 
 import pandas as pd
 import plotly.express as px
@@ -117,15 +119,17 @@ prices = load("price_snapshots")
 stores = load("store_snapshots")
 foot = load("foot_traffic")
 brands = load("brand_prices")
+contacts = load("contacts")
 runs = load("runs")
 
 if prices.empty and stores.empty:
     st.warning("No data yet. Run the scrapers first:  `python run.py all`")
     st.stop()
 
-tab_price, tab_store, tab_foot, tab_cann, tab_brand = st.tabs(
+(tab_price, tab_store, tab_foot, tab_cann, tab_brand,
+ tab_out) = st.tabs(
     ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization",
-     "🏷️ Private Labels"])
+     "🏷️ Private Labels", "📇 Outreach"])
 
 # ---------------------------------------------------------------- Pricing ----
 with tab_price:
@@ -661,6 +665,138 @@ with tab_brand:
         st.dataframe(d[["brand", "title", "product_type", "price",
                         "compare_at_price", "on_sale", "available", "url"]]
                      .sort_values("price"), width='stretch', hide_index=True)
+
+# ----------------------------------------------------------------- Outreach --
+OUT_COMPANIES = ["Boot Barn", "Ariat", "Cavender's", "Tecovas", "Sheplers",
+                 "Tractor Supply", "Rural King", "Cabela's", "Durango Boots",
+                 "Justin Boots", "Georgia Boot", "Wrangler"]
+OUT_PERSONAS = {
+    "Merchandising / Buying": ["merchandiser", "buyer", "merchandising",
+                               "category manager"],
+    "Planning / Allocation": ["planner", "allocation", "inventory planning",
+                              "demand planning"],
+    "Store Operations": ["store manager", "district manager", "regional manager",
+                         "retail operations"],
+    "Supply Chain / DC": ["supply chain", "distribution center", "logistics",
+                          "sourcing"],
+    "Marketing / E-commerce": ["marketing", "ecommerce", "digital", "brand manager"],
+    "Leadership": ["VP", "director", "chief", "head of"],
+}
+OUT_TEMPLATES = {
+    "Former employee — industry perspective": (
+        "Quick industry perspective — western/workwear retail",
+        "Hi {first},\n\nI came across your background at {company} and I'm doing "
+        "independent research to better understand the western & workwear retail "
+        "industry. Would you be open to a short 20–30 minute call to share your "
+        "general perspective on the space?\n\nTo be clear, I'm only after your "
+        "high-level industry views — not any confidential or material non-public "
+        "information about any company. I'm happy to work around your schedule.\n\n"
+        "If you'd rather not, no problem at all — just let me know and I won't "
+        "follow up.\n\nBest,\n{me}"),
+    "Competitor context": (
+        "Industry research — a quick perspective?",
+        "Hi {first},\n\nI'm researching the western & workwear retail landscape and "
+        "your experience at {company} stood out. Could I ask you for 20 minutes to "
+        "hear your general read on the category — trends, competition, what's "
+        "working?\n\nStrictly high-level industry perspective — nothing "
+        "confidential or non-public. And if now's not a good time, just say the "
+        "word and I won't follow up.\n\nThanks,\n{me}"),
+}
+
+
+def _gmail_link(to, subject, body):
+    q = urllib.parse.urlencode({"view": "cm", "fs": "1", "to": to or "",
+                                "su": subject, "body": body})
+    return "https://mail.google.com/mail/?" + q
+
+
+with tab_out:
+    st.subheader("📇 Outreach & channel checks")
+    st.warning("**Compliance:** Boot Barn is public (NYSE: BOOT). Keep questions to "
+               "high-level *industry* perspective — never solicit confidential or "
+               "material non-public information, especially from current employees. "
+               "Templates include that disclaimer and an opt-out. You review and "
+               "send every email yourself.")
+
+    st.markdown("### 1 · Find people (LinkedIn X-ray search)")
+    cc = st.multiselect("Companies", OUT_COMPANIES, default=["Boot Barn"])
+    extra_co = st.text_input("…or add a company", "")
+    if extra_co:
+        cc = cc + [extra_co]
+    personas = st.multiselect("Roles / personas", list(OUT_PERSONAS),
+                              default=["Merchandising / Buying"])
+    kw = [k for p in personas for k in OUT_PERSONAS[p]]
+    loc = st.text_input("Location (optional, e.g. \"Texas\" or \"California\")", "")
+
+    if cc and kw:
+        co_q = " OR ".join(f'"{c}"' for c in cc)
+        kw_q = " OR ".join(f'"{k}"' for k in kw)
+        query = f'site:linkedin.com/in ({co_q}) ({kw_q})'
+        if loc:
+            query += f' "{loc}"'
+        g_url = "https://www.google.com/search?q=" + urllib.parse.quote(query)
+        li_url = ("https://www.linkedin.com/search/results/people/?keywords="
+                  + urllib.parse.quote(" ".join(cc + kw + ([loc] if loc else []))))
+        st.code(query, language="text")
+        b1, b2 = st.columns(2)
+        b1.link_button("🔎 Search on Google (X-ray)", g_url, width='stretch')
+        b2.link_button("in  Search on LinkedIn", li_url, width='stretch')
+        st.caption("Click through, open profiles, and add the good ones below. "
+                   "Tip: for **former** Boot Barn staff, look for 'Past: Boot Barn' "
+                   "on the profile.")
+
+    st.divider()
+    st.markdown("### 2 · Your contacts")
+    cols = ["name", "title", "company", "relationship", "linkedin_url", "email",
+            "status", "notes"]
+    base = (contacts[cols] if not contacts.empty else
+            pd.DataFrame(columns=cols))
+    edited = st.data_editor(
+        base, num_rows="dynamic", width='stretch', key="contacts_editor",
+        column_config={
+            "relationship": st.column_config.SelectboxColumn(
+                options=["former_boot", "current_boot", "competitor", "other"]),
+            "status": st.column_config.SelectboxColumn(
+                options=["to_contact", "drafted", "sent", "replied", "passed"]),
+            "linkedin_url": st.column_config.LinkColumn(),
+        })
+    if st.button("💾 Save contacts"):
+        clean = edited.where(pd.notna(edited), None)
+        rows = clean.to_dict("records")
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        rows = [r for r in rows if r.get("name") or r.get("email")]
+        for r in rows:
+            r["added_ts"] = now
+        db.replace_contacts(rows)
+        load.clear()
+        st.success(f"Saved {len(rows)} contacts.")
+        st.rerun()
+
+    st.divider()
+    st.markdown("### 3 · Compose outreach (you review & send)")
+    if contacts.empty:
+        st.info("Add a contact above (with an email) to draft outreach.")
+    else:
+        me = st.text_input("Your name (signature)", "")
+        named = contacts[contacts["name"].notna()]
+        who = st.selectbox("Contact", named["name"].tolist())
+        row = named[named["name"] == who].iloc[0]
+        tmpl = st.selectbox("Template", list(OUT_TEMPLATES))
+        subj_t, body_t = OUT_TEMPLATES[tmpl]
+        first = str(row["name"]).split()[0] if pd.notna(row["name"]) else "there"
+        ctx = {"first": first, "company": row.get("company") or "your company",
+               "me": me or "[your name]"}
+        subject = st.text_input("Subject", subj_t.format(**ctx))
+        body = st.text_area("Body", body_t.format(**ctx), height=280)
+        to = row.get("email")
+        if not to or pd.isna(to):
+            st.warning("This contact has no email yet — add one in the table above "
+                       "to enable sending.")
+        else:
+            st.link_button("✉️ Open in Gmail (review, then send)",
+                           _gmail_link(to, subject, body), width='stretch')
+            st.caption(f"Opens a pre-filled Gmail compose to {to}. Nothing sends "
+                       "until you click Send in Gmail.")
 
 with st.sidebar:
     st.header("Run log")
