@@ -73,11 +73,11 @@ def get_profile_email(creds):
     return svc.users().getProfile(userId="me").execute().get("emailAddress")
 
 
-def send_email(creds, sender, to, subject, body):
-    """Send one plain-text email; return the Gmail message id."""
+def send_email(creds, sender, to, subject, body, subtype="plain"):
+    """Send one email (subtype 'plain' or 'html'); return the Gmail message id."""
     from googleapiclient.discovery import build
     svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
-    msg = MIMEText(body)
+    msg = MIMEText(body, subtype)
     msg["to"] = to
     if sender:
         msg["from"] = sender

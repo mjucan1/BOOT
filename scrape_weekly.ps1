@@ -33,4 +33,11 @@ if ($env:DEWEY_API_KEY -and $env:DEWEY_PRODUCT_PATH) {
     "$(Get-Date -Format o)  skipping foot-traffic sync (Dewey creds not in .env)" | Out-File -Append -Encoding utf8 $log
 }
 
+# 3) Weekly news digest email (best-effort; needs DIGEST_TO + Gmail connected)
+if ($env:DIGEST_TO) {
+    "$(Get-Date -Format o)  building news digest" | Out-File -Append -Encoding utf8 $log
+    & $py weekly_digest.py *>> $log
+    "$(Get-Date -Format o)  news digest finished (exit $LASTEXITCODE)" | Out-File -Append -Encoding utf8 $log
+}
+
 "$(Get-Date -Format o)  === weekly run complete ===" | Out-File -Append -Encoding utf8 $log
