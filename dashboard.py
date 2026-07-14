@@ -114,12 +114,24 @@ if not check_password():
     st.stop()
 
 
-@st.cache_data(ttl=300)
+# Data changes on the WEEKLY scrape schedule, so a 1-hour cache is still fresh
+# in practice and cuts full-table pulls from the DB ~12x vs the old 5 minutes.
+@st.cache_data(ttl=3600)
 def load(table: str) -> pd.DataFrame:
     try:
         return pd.read_sql(f"SELECT * FROM {table}", db.get_engine())
     except Exception:
         return pd.DataFrame()
+
+
+# Streamlit re-runs the whole script on EVERY widget interaction; without this
+# cache the full DiD loop recomputed on every click anywhere in the app. Keyed
+# on the two sliders, so it only recomputes when they actually change.
+@st.cache_data(ttl=3600, show_spinner="Running cannibalization analysis…")
+def cached_cannibalization(radius: int, window: int) -> dict:
+    from bbxray import analysis
+    return analysis.run_cannibalization(load("foot_traffic"),
+                                        radius_miles=radius, window_weeks=window)
 
 
 def latest_snapshot(df: pd.DataFrame) -> pd.DataFrame:
@@ -144,7 +156,7 @@ def store_first_seen(stores_df: pd.DataFrame) -> pd.DataFrame:
     return fs
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def load_open_dates() -> pd.DataFrame:
     """Optional enrichment: real store opening years from data/store_open_dates.csv
     (columns: store_id, and either opened_year or opened_date). Populate it from
@@ -583,12 +595,10 @@ with tab_cann:
             "exposed group's %-visit change minus the control's — a negative value "
             "means traffic was pulled from neighbors (cannibalization).")
     else:
-        from bbxray import analysis
         c1, c2 = st.columns(2)
         radius = c1.slider("Neighbor radius (miles)", 2, 50, 15)
         window = c2.slider("Pre/post window (weeks)", 4, 26, 8)
-        res = analysis.run_cannibalization(foot, radius_miles=radius,
-                                           window_weeks=window)
+        res = cached_cannibalization(radius, window)
         s = res["summary"]
         if not s or s.get("n_openings", 0) == 0:
             st.warning("No openings fall inside the data window with enough pre/post "
