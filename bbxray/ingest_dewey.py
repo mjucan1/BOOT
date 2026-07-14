@@ -114,6 +114,10 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
     skipped = 0
     for f in files:
         log(f"[dewey] reading {f.name}")
+        # The national files are huge (~5GB/week) but we keep only Boot Barn's
+        # ~600 rows, so CSVs are STREAMED in chunks and filtered as they go --
+        # memory stays flat at ~chunk size instead of several times the file
+        # size (which could exhaust RAM and kill the load).
         try:
             if f.suffix == ".parquet":
                 # Only read the handful of columns we need -- avoids loading all
@@ -121,9 +125,17 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
                 import pyarrow.parquet as pq
                 avail = pq.ParquetFile(f).schema.names
                 use = [c for c in avail if c in wanted]
-                reader = pd.read_parquet(f, columns=use or None)
+                chunks = iter([pd.read_parquet(f, columns=use or None)])
             else:
-                reader = pd.read_csv(f, compression="infer", low_memory=False)
+                chunks = pd.read_csv(f, compression="infer", chunksize=200_000)
+            name_col, parts = None, []
+            for chunk in chunks:
+                if name_col is None:
+                    name_col = _first_col(chunk, COLS["location_name"])
+                    if name_col is None:
+                        break
+                parts.append(chunk[chunk[name_col].astype(str).str.lower()
+                             .str.contains(config.BOOTBARN_NAME_MATCH, na=False)])
         except Exception as e:
             # Failed downloads sometimes land as tiny HTML error pages (Cloudflare
             # "Worker threw exception"). Skip them rather than aborting the load.
@@ -131,18 +143,17 @@ def load_to_db(folder: Path | None = None, source: str = "dewey_patterns") -> in
             log(f"  ! unreadable ({type(e).__name__}); skipping -- likely a failed "
                 "download. Delete it and re-run `download` to refetch that week.")
             continue
-        name_col = _first_col(reader, COLS["location_name"])
         if name_col is None:
             log(f"  ! no location_name column in {f.name}; skipping")
             continue
-        bb = reader[reader[name_col].astype(str).str.lower()
-                    .str.contains(config.BOOTBARN_NAME_MATCH, na=False)]
+        bb = pd.concat(parts) if parts else pd.DataFrame()
         if bb.empty:
             continue
+        # Resolve the dataset's column names once per file, not once per row.
+        colmap = {field: _first_col(bb, cands) for field, cands in COLS.items()}
         for _, r in bb.iterrows():
             rec = {"store_id": None, "source": source}
-            for field, cands in COLS.items():
-                col = _first_col(reader, cands)
+            for field, col in colmap.items():
                 val = r[col] if col else None
                 if field in ("raw_visit_counts", "raw_visitor_counts"):
                     try:
