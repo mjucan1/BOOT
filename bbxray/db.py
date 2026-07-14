@@ -170,6 +170,21 @@ scheduled_emails = Table(
     Column("error", Text),
 )
 
+financials = Table(
+    "financials", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ticker", Text), Column("company", Text), Column("metric", Text),
+    Column("period_end", Text), Column("period_type", Text),
+    Column("value", Float), Column("fy", Integer), Column("fp", Text),
+)
+
+sec_filings = Table(
+    "sec_filings", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ticker", Text), Column("company", Text), Column("form", Text),
+    Column("filed", Text), Column("title", Text), Column("url", Text),
+)
+
 _engine = None
 
 
@@ -253,6 +268,20 @@ def set_gmail_token(token_json: str) -> None:
 def get_gmail_token() -> str | None:
     with get_engine().connect() as conn:
         return conn.execute(select(gmail_token.c.token_json)).scalar()
+
+
+def replace_financials(rows: list[dict]) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(delete(financials))
+        if rows:
+            conn.execute(insert(financials), rows)
+
+
+def replace_sec_filings(rows: list[dict]) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(delete(sec_filings))
+        if rows:
+            conn.execute(insert(sec_filings), rows)
 
 
 def insert_scheduled(rows: list[dict]) -> None:

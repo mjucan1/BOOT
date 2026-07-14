@@ -189,9 +189,9 @@ if prices.empty and stores.empty:
     st.stop()
 
 (tab_price, tab_store, tab_foot, tab_cann, tab_brand, tab_comp,
- tab_out) = st.tabs(
+ tab_fin, tab_out) = st.tabs(
     ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization",
-     "🏷️ Private Labels", "🏁 Competitors", "📇 Outreach"])
+     "🏷️ Private Labels", "🏁 Competitors", "📈 Financials", "📇 Outreach"])
 
 # ---------------------------------------------------------------- Pricing ----
 with tab_price:
@@ -1181,6 +1181,79 @@ with tab_out:
                             if m3.button("Cancel", key=f"mc_{e['id']}"):
                                 db.update_scheduled(e["id"], status="canceled")
                                 st.rerun()
+
+# ----------------------------------------------------------- Financials / IR --
+with tab_fin:
+    st.subheader("📈 Financials & filings — public comps (SEC EDGAR)")
+    st.caption("Reported quarterly/annual figures + latest filings for the public "
+               "peer set. Private peers (Ariat, Tecovas, Cavender's) file nothing. "
+               "Earnings-call transcripts are third-party/copyrighted and not "
+               "reproduced — the 8-K earnings releases below carry the numbers.")
+    fin = load("financials")
+    filings = load("sec_filings")
+    if fin.empty:
+        st.info("No financials loaded yet. Run `python pull_ir.py` (also runs with "
+                "the weekly scrape).")
+    else:
+        c1, c2 = st.columns(2)
+        metric = c1.selectbox("Metric", ["Revenue", "Gross profit", "Net income",
+                                         "Diluted EPS"])
+        ptype = c2.radio("Period", ["Q", "FY"], horizontal=True,
+                         format_func=lambda x: "Quarterly" if x == "Q" else "Annual")
+        sub = fin[(fin["metric"] == metric) & (fin["period_type"] == ptype)].copy()
+        sub["date"] = pd.to_datetime(sub["period_end"], errors="coerce")
+        sub = sub.dropna(subset=["date"]).sort_values("date")
+        is_eps = metric == "Diluted EPS"
+        sub["disp"] = sub["value"] if is_eps else sub["value"] / 1e6
+        ylab = "$ / share" if is_eps else "$ millions"
+        st.plotly_chart(px.line(sub, x="date", y="disp", color="company",
+                        markers=True, labels={"disp": f"{metric} ({ylab})",
+                                              "date": ""}), width='stretch')
+
+        st.markdown("**Gross margin %** (derived: gross profit ÷ revenue)")
+        piv = fin[fin["period_type"] == ptype].pivot_table(
+            index=["company", "period_end"], columns="metric",
+            values="value").reset_index()
+        if {"Revenue", "Gross profit"}.issubset(piv.columns):
+            piv = piv.dropna(subset=["Revenue", "Gross profit"])
+            piv["margin"] = piv["Gross profit"] / piv["Revenue"] * 100
+            piv["date"] = pd.to_datetime(piv["period_end"], errors="coerce")
+            piv = piv.dropna(subset=["date"]).sort_values("date")
+            st.plotly_chart(px.line(piv, x="date", y="margin", color="company",
+                            markers=True, labels={"margin": "Gross margin %",
+                                                  "date": ""}), width='stretch')
+
+        st.markdown("**Latest reported quarter, by company**")
+        q = fin[fin["period_type"] == "Q"].copy()
+        q["date"] = pd.to_datetime(q["period_end"], errors="coerce")
+        rows = []
+        for comp in sorted(q["company"].dropna().unique()):
+            cq = q[q["company"] == comp]
+            last = cq["date"].max()
+            cur = cq[cq["date"] == last]
+
+            def _v(m):
+                s = cur[cur["metric"] == m]["value"]
+                return s.iloc[0] if not s.empty else None
+            rev, gp, ni, eps = _v("Revenue"), _v("Gross profit"), _v("Net income"), _v("Diluted EPS")
+            rows.append({
+                "Company": comp,
+                "Qtr end": str(last.date()) if pd.notna(last) else "",
+                "Revenue ($M)": round(rev / 1e6) if rev else None,
+                "Gross margin %": round(gp / rev * 100, 1) if (gp and rev) else None,
+                "Net income ($M)": round(ni / 1e6) if ni else None,
+                "Diluted EPS ($)": round(eps, 2) if eps is not None else None,
+            })
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+    if not filings.empty:
+        st.markdown("### Recent SEC filings")
+        cpick = st.selectbox("Company", sorted(filings["company"].unique()))
+        fsub = filings[filings["company"] == cpick].sort_values("filed",
+                                                                ascending=False)
+        for _, r in fsub.iterrows():
+            st.markdown(f"- **{r['form']}** · {r['filed']} — "
+                        f"[{r['title'] or r['form']}]({r['url']})")
 
 with st.sidebar:
     st.header("Run log")
