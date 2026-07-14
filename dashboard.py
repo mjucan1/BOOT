@@ -188,27 +188,35 @@ st.markdown(
     </div>""",
     unsafe_allow_html=True)
 
-prices = load("price_snapshots")
-stores = load("store_snapshots")
-foot = load("foot_traffic")
-brands = load("brand_prices")
-competitors = load("competitor_prices")
-contacts = load("contacts")
-runs = load("runs")
+# Gmail OAuth: Google's redirect lands on the app root (whatever page is
+# default), so the ?code= exchange must run globally, before page routing.
+_G_CID, _G_SEC, _G_REDIR = (_secret("GMAIL_CLIENT_ID"),
+                            _secret("GMAIL_CLIENT_SECRET"),
+                            _secret("GMAIL_REDIRECT_URI"))
+if _G_CID and _G_SEC and _G_REDIR:
+    _qp = st.query_params
+    if "code" in _qp and not st.session_state.get("gmail_token"):
+        from bbxray import gmail_send as _gs
+        try:
+            _tok = _gs.exchange_code(_G_CID, _G_SEC, _G_REDIR, _qp["code"],
+                                     st.session_state.get("oauth_state"))
+            db.set_gmail_token(_tok)
+            st.session_state["gmail_token"] = _tok
+            st.query_params.clear()
+            st.success("Gmail connected.")
+        except Exception as e:
+            st.error(f"OAuth exchange failed: {e}")
 
-if prices.empty and stores.empty:
-    st.warning("No data yet. Run the scrapers first:  `python run.py all`")
-    st.stop()
 
-(tab_price, tab_store, tab_foot, tab_cann, tab_brand, tab_comp,
- tab_fin, tab_out) = st.tabs(
-    ["💲 Pricing", "📍 Stores", "🚶 Foot Traffic", "🧭 Cannibalization",
-     "🏷️ Private Labels", "🏁 Competitors", "📈 Financials", "📇 Outreach"])
-
+# Each page loads only the tables it needs (lazily, via the cached load()).
 # ---------------------------------------------------------------- Pricing ----
-with tab_price:
+def page_pricing():
+    prices = load("price_snapshots")
     if prices.empty:
-        st.info("No pricing data. Run `python run.py prices`.")
+        if load("store_snapshots").empty:
+            st.warning("No data yet. Run the scrapers first:  `python run.py all`")
+        else:
+            st.info("No pricing data. Run `python run.py prices`.")
     else:
         cur = latest_snapshot(prices).copy()
         cur["eff_price"] = cur["sale_price"].fillna(cur["list_price"])
@@ -355,7 +363,8 @@ with tab_price:
                      hide_index=True)
 
 # ----------------------------------------------------------------- Stores ----
-with tab_store:
+def page_stores():
+    stores = load("store_snapshots")
     if stores.empty:
         st.info("No store data. Run `python run.py stores`.")
     else:
@@ -474,7 +483,8 @@ with tab_store:
                 st.dataframe(cl, width='stretch', hide_index=True)
 
 # ------------------------------------------------------------- Foot traffic --
-with tab_foot:
+def page_foot_traffic():
+    foot = load("foot_traffic")
     if foot.empty:
         st.info("No foot-traffic data. Load a Dewey patterns dataset:\n\n"
                 "```\npip install \"git+https://github.com/Dewey-Data/deweydatapy\"\n"
@@ -573,7 +583,8 @@ with tab_foot:
         st.dataframe(f, width='stretch', hide_index=True)
 
 # ----------------------------------------------------------- Cannibalization --
-with tab_cann:
+def page_cannibalization():
+    foot = load("foot_traffic")
     st.subheader("🧭 Store cannibalization (difference-in-differences)")
     st.caption("When Boot Barn opens a store, does it steal foot traffic from its "
                "own nearby stores? We compare nearby ('exposed') stores' visit "
@@ -648,7 +659,9 @@ with tab_cann:
                                    hover_name="city"), width='stretch')
 
 # ------------------------------------------------------------ Private labels --
-with tab_brand:
+def page_private_labels():
+    brands = load("brand_prices")
+    prices = load("price_snapshots")   # cross-channel DTC-vs-catalog comparison
     st.subheader("🏷️ Private-label brands (their own Shopify sites)")
     st.caption("Boot Barn's exclusive brands (Idyllwind, Cody James, Shyanne, "
                "Moonshine Spirit) run direct-to-consumer Shopify stores. This "
@@ -770,7 +783,9 @@ with tab_brand:
                      .sort_values("price"), width='stretch', hide_index=True)
 
 # -------------------------------------------------------------- Competitors --
-with tab_comp:
+def page_competitors():
+    competitors = load("competitor_prices")
+    prices = load("price_snapshots")
     st.subheader("🏁 Competitive price positioning")
     st.caption("Boot Barn's catalog vs. seven western/workwear DTC competitors "
                "(Shopify). Category-level views are the fairest read; the overall "
@@ -883,7 +898,8 @@ def _gmail_link(to, subject, body):
     return "https://mail.google.com/mail/?" + q
 
 
-with tab_out:
+def page_outreach():
+    contacts = load("contacts")
     st.subheader("📇 Outreach & channel checks")
     st.warning("**Compliance:** Boot Barn is public (NYSE: BOOT). Keep questions to "
                "high-level *industry* perspective — never solicit confidential or "
@@ -1013,8 +1029,7 @@ with tab_out:
     # ---- 4 · OAuth send: connect Gmail, approve a queue, bulk-send ----
     st.divider()
     st.markdown("### 4 · Send from the dashboard (Gmail OAuth)")
-    g_cid, g_sec = _secret("GMAIL_CLIENT_ID"), _secret("GMAIL_CLIENT_SECRET")
-    g_redir = _secret("GMAIL_REDIRECT_URI")
+    g_cid, g_sec, g_redir = _G_CID, _G_SEC, _G_REDIR
     if not (g_cid and g_sec and g_redir):
         st.info("**Not set up yet.** To send from inside the dashboard, create a "
                 "Google Cloud OAuth client (send-only Gmail scope) and add "
@@ -1023,19 +1038,7 @@ with tab_out:
                 "(Ask me for the 15-min setup walkthrough.)")
     else:
         from bbxray import gmail_send
-        qp = st.query_params
-        if "code" in qp and not st.session_state.get("gmail_token"):
-            try:
-                tok = gmail_send.exchange_code(
-                    g_cid, g_sec, g_redir, qp["code"],
-                    st.session_state.get("oauth_state"))
-                db.set_gmail_token(tok)
-                st.session_state["gmail_token"] = tok
-                st.query_params.clear()
-                st.success("Gmail connected.")
-            except Exception as e:
-                st.error(f"OAuth exchange failed: {e}")
-
+        # (the ?code= OAuth exchange itself runs globally, before page routing)
         tok = st.session_state.get("gmail_token") or db.get_gmail_token()
         creds = acct = None
         if tok:
@@ -1193,7 +1196,7 @@ with tab_out:
                                 st.rerun()
 
 # ----------------------------------------------------------- Financials / IR --
-with tab_fin:
+def page_financials():
     st.subheader("📈 Financials & filings — public comps (SEC EDGAR)")
     st.caption("Reported quarterly/annual figures + latest filings for the public "
                "peer set. Private peers (Ariat, Tecovas, Cavender's) file nothing. "
@@ -1267,8 +1270,24 @@ with tab_fin:
 
 with st.sidebar:
     st.header("Run log")
+    runs = load("runs")
     if not runs.empty:
         st.dataframe(runs.sort_values("run_id", ascending=False)[
             ["run_ts", "kind", "n_rows", "notes"]],
             width='stretch', hide_index=True)
     st.caption("Data source: bootbarn.com (public) + Dewey Data (foot traffic).")
+
+# Multipage navigation: only the SELECTED page's code runs on each interaction
+# (st.tabs executed all eight tab bodies — and loaded every table — on every
+# rerun of the script).
+nav = st.navigation([
+    st.Page(page_pricing, title="Pricing", icon="💲", default=True),
+    st.Page(page_stores, title="Stores", icon="📍"),
+    st.Page(page_foot_traffic, title="Foot Traffic", icon="🚶"),
+    st.Page(page_cannibalization, title="Cannibalization", icon="🧭"),
+    st.Page(page_private_labels, title="Private Labels", icon="🏷️"),
+    st.Page(page_competitors, title="Competitors", icon="🏁"),
+    st.Page(page_financials, title="Financials", icon="📈"),
+    st.Page(page_outreach, title="Outreach", icon="📇"),
+])
+nav.run()
