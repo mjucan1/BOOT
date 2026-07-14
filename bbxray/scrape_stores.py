@@ -45,7 +45,10 @@ def parse_store_block(b) -> dict | None:
     lines = [ln for ln in txt.split("\n") if ln.strip()]
     city = addr.select_one(".address-city") if addr else None
     state = addr.select_one(".address-state") if addr else None
-    zipm = _ZIP_RE.search(txt)
+    # Take the LAST ZIP-shaped match: the ZIP follows street/city/state in the
+    # address text, and a 5-digit street number (e.g. "11855 Gateway Blvd")
+    # would otherwise be picked up as the ZIP and geocode the store wrongly.
+    zips = _ZIP_RE.findall(txt)
     phonem = _PHONE_RE.search(txt)
     return {
         "store_id": str(sid).strip(),
@@ -53,7 +56,7 @@ def parse_store_block(b) -> dict | None:
         "address": lines[0] if lines else None,
         "city": city.get_text(strip=True) if city else None,
         "state": state.get_text(strip=True) if state else None,
-        "zip": zipm.group(1) if zipm else None,
+        "zip": zips[-1] if zips else None,
         "phone": phonem.group(0) if phonem else None,
         "url": f"{config.BASE_URL}/stores?StoreID={sid}",
     }
