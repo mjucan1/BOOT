@@ -303,46 +303,47 @@ def page_pricing():
                 k = max(1, int(len(s) * frac)) if len(s) >= 5 else 0
                 return s.iloc[k:len(s) - k].mean() if len(s) > 2 * k else s.mean()
 
-            trend = (sub.groupby("run_ts")
+            # Bucket by MONTH, not raw run_ts: every sparse Wayback capture has
+            # its own timestamp with ~1 product, so a per-snapshot min-sample
+            # filter silently deleted the whole 2017+ history (chart appeared to
+            # start "a couple of days ago"). Monthly pooling gives each point a
+            # real sample AND keeps the history; median + trimmed mean stay as
+            # the outlier guards (the "$800 jeans" bug).
+            sub["month"] = sub["run_ts"].astype(str).str[:7]
+            trend = (sub[sub["month"].str.match(r"\d{4}-\d{2}")]
+                     .groupby("month")
                      .agg(median_price=("eff_price", "median"),
                           trimmed_avg=("eff_price", _trim_mean),
                           products=("product_id", "nunique")).reset_index())
-            # Thin periods (esp. sparse Wayback months) let a single mislabeled or
-            # premium item spike the line -- the "$800 jeans" bug. Require a min
-            # sample and use median + a 10%-trimmed mean, both outlier-resistant.
-            min_n = st.slider("Min products per trend point", 1, 20, 5,
+            min_n = st.slider("Min products per trend point", 1, 20, 3,
                               key=f"minn_{sel}")
             trend = trend[trend["products"] >= min_n]
-            trend["date"] = pd.to_datetime(trend["run_ts"], errors="coerce", utc=True)
+            trend["date"] = pd.to_datetime(trend["month"] + "-01", errors="coerce")
+            trend = trend.dropna(subset=["date"]).sort_values("date")
             if len(trend) > 1:
-                st.markdown(f"**{sel} — median & trimmed-avg price over time** "
-                            f"(periods with ≥{min_n} products)")
+                st.markdown(f"**{sel} — monthly median & trimmed-avg price** "
+                            f"(months with ≥{min_n} products)")
                 melt = trend.melt(id_vars="date",
                                   value_vars=["median_price", "trimmed_avg"],
                                   var_name="metric", value_name="price")
                 st.plotly_chart(px.line(melt, x="date", y="price", color="metric",
                                         markers=True), width='stretch')
             elif len(trend) == 1:
-                st.caption(f"Only one period has ≥{min_n} products so far — the "
+                st.caption(f"Only one month has ≥{min_n} products so far — the "
                            "trend builds as weekly data accrues.")
 
-                st.markdown(f"**Biggest price moves in {sel}** (first → latest snapshot)")
-                piv = sub.pivot_table(index=["product_id", "name"], columns="run_ts",
-                                      values="eff_price", aggfunc="last")
-                moves = piv[[piv.columns.min(), piv.columns.max()]].reset_index()
-                moves.columns = ["product_id", "name", "first_price", "latest_price"]
-                moves["change"] = moves["latest_price"] - moves["first_price"]
-                moves = moves.dropna(subset=["change"])
-                moves = moves[moves["change"] != 0].sort_values("change")
-                if not moves.empty:
-                    st.dataframe(moves, width='stretch', hide_index=True)
-                else:
-                    st.caption("No price changes detected in this category yet.")
+            st.markdown(f"**Biggest price moves in {sel}** (first → latest snapshot)")
+            piv = sub.pivot_table(index=["product_id", "name"], columns="run_ts",
+                                  values="eff_price", aggfunc="last")
+            moves = piv[[piv.columns.min(), piv.columns.max()]].reset_index()
+            moves.columns = ["product_id", "name", "first_price", "latest_price"]
+            moves["change"] = moves["latest_price"] - moves["first_price"]
+            moves = moves.dropna(subset=["change"])
+            moves = moves[moves["change"] != 0].sort_values("change")
+            if not moves.empty:
+                st.dataframe(moves, width='stretch', hide_index=True)
             else:
-                st.info(f"Only one snapshot so far — the **{sel}** price-trend line "
-                        f"builds up as you collect weekly data. Right now: median "
-                        f"${latest_sub['eff_price'].median():,.2f} across "
-                        f"{latest_sub['product_id'].nunique()} products.")
+                st.caption("No price changes detected in this category yet.")
 
             st.markdown(f"**Current {sel} products**")
             st.dataframe(
