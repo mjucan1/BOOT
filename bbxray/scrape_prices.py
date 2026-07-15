@@ -105,6 +105,53 @@ def classify_category(name: str | None, url: str) -> str | None:
     return None
 
 
+# ---- Reporting-style merchandise buckets (Boot Barn disclosure-aligned) ----
+# Work Boots / Denim are unisex buckets; western boots and apparel split by
+# gender; kids and anything ungendered/unclassifiable roll into Other. Applied
+# at DISPLAY time in the dashboard (the granular category above stays stored).
+_KIDS = re.compile(r"\b(kids?|boys?|girls?|infant|toddler|youth)\b")
+_FEM = re.compile(r"\b(women'?s?|womens|ladies|ladie'?s)\b")
+_MAL = re.compile(r"\b(men'?s?|mens)\b")
+_WORK = re.compile(r"work boot|work shoe|steel toe|composite toe|safety toe|"
+                   r"soft toe|wellington|logger|lineman|met guard|waterproof work")
+# Denim = jeans/denim BOTTOMS; a "denim shirt/jacket" is apparel, not Denim.
+_DENIM = re.compile(r"\bjeans?\b|denim\s+(pants?|shorts?|skirt|overalls?)")
+_BOOT = re.compile(r"\bboots?\b(?!\s*cut)|\bbooties?\b")
+_APPAREL = re.compile(r"shirt|\btee\b|t-shirt|\btop\b|blouse|jacket|\bcoat\b|"
+                      r"vest|hoodie|sweater|sweatshirt|flannel|outerwear|"
+                      r"\bpants?\b|shorts|skirt|\bdress\b|leggings?|overalls?|"
+                      r"\bbibs?\b|cardigan|pullover|henley|polo\b")
+
+BUCKETS7 = ["Work Boots", "Denim", "Ladies' Apparel", "Mens' Apparel",
+            "Ladies' Western Boot", "Mens' Western Boot", "Other"]
+
+
+def bucket7(name: str | None, url: str = "") -> str:
+    """Map a product to the 7-bucket reporting scheme via name/URL keywords."""
+    hay = f"{name or ''} {url or ''}".lower()
+    # "Boot Barn Exclusive ..." product names would false-match the boot rule.
+    hay = hay.replace("boot barn", " ")
+    if _KIDS.search(hay):
+        return "Other"
+    if _WORK.search(hay):
+        return "Work Boots"
+    if _DENIM.search(hay):
+        return "Denim"
+    fem, mal = bool(_FEM.search(hay)), bool(_MAL.search(hay))
+    if _BOOT.search(hay):
+        if fem:
+            return "Ladies' Western Boot"
+        if mal:
+            return "Mens' Western Boot"
+        return "Other"
+    if _APPAREL.search(hay):
+        if fem:
+            return "Ladies' Apparel"
+        if mal:
+            return "Mens' Apparel"
+    return "Other"
+
+
 def _itemprop(soup, name: str):
     el = soup.select_one(f'[itemprop="{name}"]')
     if not el:

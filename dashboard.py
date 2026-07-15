@@ -119,9 +119,26 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def load(table: str) -> pd.DataFrame:
     try:
-        return pd.read_sql(f"SELECT * FROM {table}", db.get_engine())
+        df = pd.read_sql(f"SELECT * FROM {table}", db.get_engine())
     except Exception:
         return pd.DataFrame()
+    # Display in Boot Barn reporting-style buckets (Work Boots, Denim, gendered
+    # apparel/western boots, Other); the granular category stays stored in the DB.
+    # Done here (cached) so every page sees the same scheme.
+    from bbxray.scrape_prices import BUCKETS7, bucket7
+    if table == "price_snapshots" and not df.empty and "name" in df.columns:
+        df["category"] = [bucket7(n, u) for n, u in
+                          zip(df["name"], df["url"].fillna(""))]
+    elif table == "competitor_prices" and not df.empty and "title" in df.columns:
+        # Newer scrapes store bucket7 (classified WITH Shopify tags -- the best
+        # gender signal) directly; keep those, re-derive only older-scheme rows.
+        _pt = (df["product_type"].fillna("") if "product_type" in df.columns
+               else [""] * len(df))
+        df["category"] = [
+            c if c in BUCKETS7 else bucket7(f"{t or ''} {pt}", u or "")
+            for c, t, pt, u in zip(df["category"], df["title"], _pt,
+                                   df["url"].fillna(""))]
+    return df
 
 
 # Streamlit re-runs the whole script on EVERY widget interaction; without this
@@ -265,7 +282,7 @@ def page_pricing():
             st.info("No category labels captured yet.")
         else:
             sel = st.selectbox("Category", cats,
-                               index=cats.index("Jeans") if "Jeans" in cats else 0)
+                               index=cats.index("Denim") if "Denim" in cats else 0)
             sub = prices[prices["category"] == sel].copy()
             sub["eff_price"] = sub["sale_price"].fillna(sub["list_price"])
             sub["discount_pct"] = (
@@ -719,7 +736,6 @@ def page_private_labels():
         st.caption("Same brand, two channels — its own Shopify store vs. inside "
                    "bootbarn.com — showing whether Boot Barn prices its private "
                    "labels differently by channel.")
-        from bbxray.scrape_prices import classify_category
         live = prices[prices["source"] != "wayback"] if "source" in prices else prices
         cat_latest = latest_snapshot(live)
         summ = []
@@ -749,7 +765,8 @@ def page_private_labels():
             bsel = st.selectbox("Category breakdown", sdf["brand"].tolist())
             dbb = latest_snapshot(brands[brands["brand"].astype(str)
                                   .str.contains(bsel, case=False, na=False)]).copy()
-            dbb["cat"] = [classify_category(t, u) for t, u in
+            from bbxray.scrape_prices import bucket7
+            dbb["cat"] = [bucket7(t, u) for t, u in
                           zip(dbb["title"].fillna(""), dbb["url"].fillna(""))]
             dbb["eff"] = dbb["price"]
             dbb["channel"] = "DTC site"

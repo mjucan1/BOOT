@@ -104,14 +104,20 @@ def run() -> int:
 
 
 def _competitor_row(p: dict, competitor: str, site: str, run_ts: str) -> dict:
-    from bbxray.scrape_prices import classify_category
+    from bbxray.scrape_prices import bucket7
     base = product_row(p, competitor, site, run_ts)
+    # Shopify tags usually carry the gender ("Womens", "Men's Boots") that thin
+    # titles like "The Jane" lack -- fold them into the classification text.
+    tags = p.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    hay = f"{base['title'] or ''} {base['product_type'] or ''} {' '.join(tags)}"
     return {
         "run_ts": run_ts, "competitor": competitor,
         "brand": p.get("vendor") or competitor, "site": site,
         "product_id": base["product_id"], "title": base["title"],
         "product_type": base["product_type"],
-        "category": classify_category(base["title"], base["url"]),
+        "category": bucket7(hay, base["url"]),
         "price": base["price"], "compare_at_price": base["compare_at_price"],
         "on_sale": base["on_sale"], "available": base["available"],
         "url": base["url"],
