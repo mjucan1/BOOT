@@ -65,13 +65,23 @@ class TestProductRow:
 
 class TestCompetitorRow:
     def test_adds_competitor_and_category(self):
+        # Category uses the 7-bucket reporting scheme; gender comes from Shopify
+        # tags (titles like "The Jane" rarely carry it).
         p = {"id": 9, "handle": "snip", "title": "Snip Toe Western Boot",
              "vendor": "Tecovas", "product_type": "Boots",
+             "tags": ["Womens", "Exotic"],
              "variants": [{"price": "255.00", "compare_at_price": None,
                            "available": True}]}
         row = _competitor_row(p, "Tecovas", "tecovas.com", RUN_TS)
         assert row["competitor"] == "Tecovas"
-        assert row["category"] == "Western Boots"  # classified from the title
+        assert row["category"] == "Ladies' Western Boot"
         assert row["price"] == 255.0
         assert row["on_sale"] == 0
         assert "compare_at_price" in row and row["compare_at_price"] is None
+
+    def test_ungendered_boot_falls_to_other(self):
+        p = {"id": 10, "handle": "b", "title": "Snip Toe Western Boot",
+             "product_type": "Boots",
+             "variants": [{"price": "255.00", "compare_at_price": None,
+                           "available": True}]}
+        assert _competitor_row(p, "X", "x.com", RUN_TS)["category"] == "Other"
